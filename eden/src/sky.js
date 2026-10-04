@@ -70,8 +70,9 @@ export function createSky(scene) {
         float r = length(vP.xy);
         float t = (r - 1500.0) / 1350.0;
         float a = smoothstep(0.0,0.06,t) * (1.0 - smoothstep(0.82,1.0,t));
-        a *= 0.55 + 0.45*step(0.5, fract(t*3.0+0.15));
-        a *= 0.5;
+        float bands = smoothstep(0.35,0.5,fract(t*5.0+0.15)) * (1.0 - smoothstep(0.55,0.7,fract(t*5.0+0.15)));
+        a *= 0.25 + 0.6*bands;
+        a *= 0.55;
         gl_FragColor = vec4(vec3(0.93,0.96,1.0), a);
         #include <colorspace_fragment>
       }`,

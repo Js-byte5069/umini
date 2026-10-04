@@ -19,6 +19,7 @@ export class Batch {
   constructor() { this.parts = new Map(); }
   add(key, geo, matrix = null, o = {}) {
     const g = geo.index ? geo.toNonIndexed() : geo.clone();
+    const baked = g.getAttribute('color');   // baked AO (Blender assets) → multiplied into the vertex colour
     for (const n of Object.keys(g.attributes)) if (n !== 'position' && n !== 'normal') g.deleteAttribute(n);
     if (matrix) g.applyMatrix4(matrix);
     const pos = g.attributes.position, nor = g.attributes.normal;
@@ -31,6 +32,7 @@ export class Batch {
         k = lerp(0.74, 1, sstep(-1, 9, y));
         if (nor.getY(i) < -0.35) k *= 0.84;
       }
+      if (baked) k *= 0.35 + 0.65 * baked.getX(i);
       col[i * 3] = Math.pow(k, 1.15) * (tint ? tint.r : 1);
       col[i * 3 + 1] = k * (tint ? tint.g : 1);
       col[i * 3 + 2] = Math.pow(k, 0.86) * (tint ? tint.b : 1);

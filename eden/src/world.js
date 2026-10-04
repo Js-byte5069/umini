@@ -159,7 +159,7 @@ export async function buildWorld(scene, onProgress = () => {}) {
         // keep the central route readable, avoid overlapping buildings
         if (keepClear.some((k) => Math.abs(x - k.x) < k.hx && Math.abs(z - k.z) < k.hz)) continue;
         if (z > 36 && z < 140 && Math.abs(x) < 20) continue;
-        if (z < 34 && z > -195 && Math.abs(x - canyonX(z)) < 11) continue;   // keep the canyon route open
+        if (z < 48 && z > -195 && Math.abs(x - canyonX(z)) < 15) continue;   // keep the canyon route open
         if (Math.abs(x) < 8 && z > 150 && z < 250 && r() < 0.8) continue;
         const sz = sizeMin + r() * (sizeMax - sizeMin) * r();
         const sd = Math.floor(r() * 1e5);

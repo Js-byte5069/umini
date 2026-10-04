@@ -23,36 +23,37 @@ const mulOff = (face, cw, cd, y0, dz, ox = 0, oy = 0) => {
 };
 
 function layoutFace(W, H, o, r, withDoor) {
-  const gf = o.gf ?? 5.6, fh = o.fh ?? 4.2;
+  const gf = o.gf ?? 6.0, fh = o.fh ?? 5.2;
   const nf = Math.max(0, Math.floor((H - gf - 1.6) / fh));
-  const margin = 2.0;
+  const margin = 2.2;
   const usable = W - margin * 2;
-  const nc = Math.max(1, Math.round(usable / (o.bay ?? 4.5)));
+  const nc = Math.max(1, Math.round(usable / (o.bay ?? 5.6)));
   const bw = usable / nc;
+  const winP = o.windows ?? 0.1;
   const back = [], skin = [], pil = [];
   const rows = nf + 1;
   for (let f = 0; f < rows; f++) {
-    const fy = f === 0 ? 1.3 : gf + (f - 1) * fh + 0.95;
-    const wh = f === 0 ? 3.0 : fh * 0.54;
+    const base = f === 0 ? 0 : gf + (f - 1) * fh;
+    const rh = f === 0 ? gf : fh;
     for (let c = 0; c < nc; c++) {
       const cx = -W / 2 + margin + (c + 0.5) * bw;
-      if (withDoor && f === 0 && Math.abs(cx) < 2.6) continue;
-      const blank = r() < (o.blank ?? 0.16);
-      const ww = bw * 0.46;
-      if (blank) {
-        skin.push([cx - bw * 0.36, fy, cx + bw * 0.36, fy + wh + 0.2, 0.25]);
+      if (withDoor && f === 0 && Math.abs(cx) < 3.2) continue;
+      if (r() < winP) {
+        // tall slit window (through both layers) inside a stepped frame
+        const ww = bw * 0.26, y0 = base + rh * 0.2, y1 = base + rh * 0.8;
+        back.push([cx - ww / 2, y0, cx + ww / 2, y1, 0.2]);
+        skin.push([cx - ww / 2 - 0.35, y0 - 0.35, cx + ww / 2 + 0.35, y1 + 0.35, 0.3]);
       } else {
-        back.push([cx - ww / 2, fy, cx + ww / 2, fy + wh, 0.22]);
-        skin.push([cx - ww / 2 - 0.3, fy - 0.3, cx + ww / 2 + 0.3, fy + wh + 0.3, 0.3]);
-        if (f > 0) skin.push([cx - bw * 0.3, fy - 1.35, cx + bw * 0.3, fy - 0.75, 0.14]);
+        // large recessed panel: reads as segmented slate wall
+        skin.push([cx - bw * 0.44, base + 0.55, cx + bw * 0.44, base + rh - 0.55, 0.35]);
       }
     }
   }
   if (withDoor) {
-    back.push([-1.7, 0, 1.7, 4.5, 0.3]);
-    skin.push([-1.95, 0, 1.95, 4.8, 0.35]);
+    back.push([-2.0, 0, 2.0, 5.2, 0.3]);
+    skin.push([-2.3, 0, 2.3, 5.6, 0.4]);
   }
-  for (let c = 2; c < nc; c += 2) pil.push(-W / 2 + margin + c * bw);
+  for (let c = 1; c < nc; c++) pil.push(-W / 2 + margin + c * bw);
   return { back, skin, pil, nf, gf, fh };
 }
 
@@ -71,18 +72,38 @@ function buildFace(B, lod, face, cw, cd, y0, H, o, r, withDoor) {
     mulOff(face, cw, cd, y0, 0.6));
   if (!detail) return;
   // pilasters between bay groups
-  for (const px of L.pil) B.add('trim', rbox(0.95, H - 1.0, 0.45, 0.14, 3), mulOff(face, cw, cd, y0, FACE + 0.18, px, H / 2));
+  for (const px of L.pil) {
+    B.add('trim', rbox(1.1, H - 0.8, 0.7, 0.2, 3), mulOff(face, cw, cd, y0, FACE + 0.28, px, H / 2));
+    B.add('wallLight', rbox(1.5, 0.7, 1.0, 0.2, 2), mulOff(face, cw, cd, y0, FACE + 0.38, px, H - 0.5));
+  }
+  // exposed vertical pipe run with clamps
+  if (H > 14) {
+    const px = L.pil[0] !== undefined ? L.pil[0] + 1.1 : 0;
+    B.add('metal', cyl(0.3, 0.3, H - 3, 14), mulOff(face, cw, cd, y0, FACE + 0.8, px, H / 2));
+    for (let y = 3; y < H - 2; y += 4.5) B.add('trim', cyl(0.45, 0.45, 0.35, 14), mulOff(face, cw, cd, y0, FACE + 0.8, px, y));
+  }
+  // side gallery: deck, rails and wall brackets
+  if (H > 18 && W > 12 && lod === 0 && face !== 'z-') {
+    const gy = Math.min(H * 0.42, 16), gl = Math.min(W * 0.55, 16);
+    B.add('deck', rbox(gl, 0.34, 2.6, 0.08, 2), mulOff(face, cw, cd, y0, FACE + 1.3, W * 0.12, gy));
+    for (let k = 0; k <= 4; k++) {
+      const x = W * 0.12 - gl / 2 + 0.4 + (gl - 0.8) * k / 4;
+      B.add('metal', strut(V(x, gy - 0.2, FACE + 2.4), V(x, gy - 1.9, FACE + 0.1), 0.09, 6), faceMatrix(face, cw, cd, y0));
+      B.add('metal', cyl(0.05, 0.05, 1.05, 6), mulOff(face, cw, cd, y0, FACE + 2.5, x, gy + 0.55));
+    }
+    B.add('trim', rbox(gl, 0.09, 0.09, 0.03, 1), mulOff(face, cw, cd, y0, FACE + 2.5, W * 0.12, gy + 1.1));
+  }
 }
 
 function accentSlabs(B, lod, o, cw, cd, y0, H) {
   for (const a of o.accent ?? []) {
-    const segH = 6.4, gap = 0.2;
+    const segH = 8.2, gap = 0.22;
     let y = a.from ?? 1.2;
     const to = Math.min(a.to ?? H - 1.6, H - 0.8);
     while (y < to - 1) {
       const sh = Math.min(segH, to - y);
       const m = mulOff(a.face, cw, cd, y0, FACE + 0.22, a.x ?? 0, y + sh / 2);
-      B.add('accent', rbox(a.w, sh - gap, 0.55, 0.16, lod === 0 ? 3 : 1), m);
+      B.add('accent', rbox(a.w * 1.25, sh - gap, 0.7, 0.2, lod === 0 ? 3 : 1), m);
       if (lod === 0 && sh > 3) {
         B.add('accentDark', rbox(a.w - 1.0, sh - gap - 1.1, 0.2, 0.08, 2), mulOff(a.face, cw, cd, y0, FACE + 0.55, a.x ?? 0, y + sh / 2));
         B.add('accentDark', rbox(a.w - 0.1, 0.18, 0.62, 0.05, 1), mulOff(a.face, cw, cd, y0, FACE + 0.22, a.x ?? 0, y + sh - gap / 2 - 0.35));
@@ -151,7 +172,7 @@ export function building(o) {
         T.add('wallLight', rbox(pt, ph, d - 2 * pt - 0.1, 0.2, 2), M(-px + pt / 2, y0 + H + 0.65, 0));
         // horizontal trim bands every third floor
         if (lod === 0) {
-          const gf = t.gf ?? 5.6, fh = t.fh ?? 4.2;
+          const gf = t.gf ?? 6.0, fh = t.fh ?? 5.2;
           for (let y = gf + fh * 2 - 0.1; y < H - 3; y += fh * 3)
             T.add('trim', rbox(w + 0.45, 0.42, d + 0.45, 0.12, 2), M(0, y0 + y, 0));
         }

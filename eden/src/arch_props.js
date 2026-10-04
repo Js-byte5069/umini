@@ -4,6 +4,7 @@ import { M, rbox, cyl, strut, loft, extrude, slabWithHoles, sculptRock, snowPill
 import { building } from './arch_building.js';
 import { railing } from './arch_infra.js';
 import { rng } from './noise.js';
+import { ASSETS } from './assets.js';
 
 const V = (x, y, z) => new THREE.Vector3(x, y, z);
 
@@ -11,10 +12,17 @@ const V = (x, y, z) => new THREE.Vector3(x, y, z);
 export function rock({ seed = 1, size = 3, red = false, flat = 0.7, planes = 6, squash = 0.75, snowCap = true }) {
   return (lod, B, col) => {
     const r = rng(seed + 1);
-    const seg = [44, 28, 18, 12][lod];
     const rx = size * (0.8 + r() * 0.5), rz = size * (0.8 + r() * 0.5), ry = size * squash * (0.8 + r() * 0.5);
-    const g = sculptRock(seed, { rx, ry, rz, planes, seg, topFlat: flat, k: 5 + r() * 2, rough: 0.1 });
-    B.add(red ? 'rockRed' : 'rockBlue', g, M(0, ry * 0.18, 0, 0, r() * 6.28, 0));
+    const lib = ASSETS.rocks;
+    if (lib) {
+      // Blender-sculpted rock (≈20k tris at LOD0, baked AO); unit rock spans ~[-1,1]
+      const geo = lib[((seed % lib.length) + lib.length) % lib.length][Math.min(lod, 2)];
+      B.add(red ? 'rockRed' : 'rockBlue', geo, M(0, ry * 0.18, 0, 0, r() * 6.28, 0, rx, ry, rz));
+    } else {
+      const seg = [44, 28, 18, 12][lod];
+      const g = sculptRock(seed, { rx, ry, rz, planes, seg, topFlat: flat, k: 5 + r() * 2, rough: 0.1 });
+      B.add(red ? 'rockRed' : 'rockBlue', g, M(0, ry * 0.18, 0, 0, r() * 6.28, 0));
+    }
     if (snowCap && lod < 2 && size > 1.6)
       B.add('snow', snowPillow(rx * 1.25, rz * 1.25, ry * 0.2 + 0.25, { seed, seg: 14, bury: 0.5 }), M(0, ry * flat * 0.88 + ry * 0.16, 0), { noAO: true, tint: snowTint(seed) });
     const m = Math.max(rx, rz) * 0.55;
@@ -106,8 +114,12 @@ export function ruinWall({ w = 16, h = 9, t = 2.4, seed = 1 }) {
     const r = rng(seed * 13 + 1);
     const s = new THREE.Shape();
     s.moveTo(-w / 2, -1.2); s.lineTo(w / 2, -1.2);
-    s.lineTo(w / 2, h * 0.84); s.lineTo(w * 0.33, h * (0.96 + r() * 0.08)); s.lineTo(w * 0.17, h * 0.74);
-    s.lineTo(-w * 0.05, h * 0.9); s.lineTo(-w * 0.3, h * 0.66); s.lineTo(-w * 0.42, h * 0.8); s.lineTo(-w / 2, h * 0.72); s.closePath();
+    s.lineTo(w / 2, h * 0.84);
+    s.quadraticCurveTo(w * 0.42, h * (0.98 + r() * 0.06), w * 0.28, h * 0.86);
+    s.quadraticCurveTo(w * 0.17, h * 0.68, w * 0.05, h * 0.8);
+    s.quadraticCurveTo(-w * 0.08, h * 0.95, -w * 0.22, h * 0.74);
+    s.quadraticCurveTo(-w * 0.34, h * 0.6, -w * 0.44, h * 0.72);
+    s.lineTo(-w / 2, h * 0.7); s.closePath();
     const hole = new THREE.Path();
     const ax = w * 0.19, ay1 = h * 0.52;
     hole.moveTo(-ax, 0); hole.lineTo(-ax, ay1 - ax); hole.absarc(0, ay1 - ax, ax, Math.PI, 0, true); hole.lineTo(ax, 0); hole.closePath();
