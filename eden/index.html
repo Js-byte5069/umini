@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>EDEN 伊甸星</title>
+<link rel="icon" href="data:,">
+<style>
+  html,body{margin:0;height:100%;background:#9db9ee;overflow:hidden;font-family:"PingFang SC","Microsoft YaHei",system-ui,sans-serif}
+  canvas{display:block;width:100vw;height:100vh}
+  #hud{position:fixed;inset:0;pointer-events:none;color:#1d2650}
+  #cross{position:absolute;left:50%;top:50%;width:6px;height:6px;margin:-3px;border-radius:50%;background:rgba(255,255,255,.85);box-shadow:0 0 0 1px rgba(40,60,130,.45)}
+  #zone{position:absolute;left:28px;top:24px;transition:opacity .6s}
+  #zone .t{font-size:30px;letter-spacing:.38em;font-weight:300;color:#fff;text-shadow:0 1px 8px rgba(30,50,130,.5)}
+  #zone .z{margin-top:6px;font-size:14px;letter-spacing:.12em;color:#f4f7ff;text-shadow:0 1px 6px rgba(30,50,130,.55)}
+  #zone .z b{color:#ffd9cf;font-weight:600}
+  #help{position:absolute;left:0;right:0;bottom:22px;text-align:center;font-size:12px;letter-spacing:.1em;color:#fff;text-shadow:0 1px 5px rgba(30,50,130,.6);opacity:.85}
+  #start{position:fixed;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;background:radial-gradient(circle at 50% 45%,rgba(80,120,220,.25),rgba(20,30,90,.55));color:#fff;cursor:pointer;text-shadow:0 2px 12px rgba(20,30,90,.6);transition:opacity .4s}
+  #start h1{margin:0;font-weight:300;letter-spacing:.6em;font-size:56px;padding-left:.6em}
+  #start p{margin:14px 0 0;letter-spacing:.2em;font-size:15px}
+  #start small{margin-top:26px;opacity:.85;font-size:12px;letter-spacing:.12em;line-height:1.9;text-align:center}
+  body.playing #start{opacity:0;pointer-events:none}
+  body.shot #hud,body.shot #start{display:none}
+  #load{position:fixed;inset:0;background:#8fb0ee;color:#fff;display:flex;align-items:center;justify-content:center;letter-spacing:.4em;transition:opacity .6s}
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div id="hud">
+  <div id="cross"></div>
+  <div id="zone"><div class="t">EDEN</div><div class="z" id="zname">伊甸星 · <b>雪原入口</b></div></div>
+  <div id="help">WASD 移动 · Shift 奔跑 · 空格 跳跃 · 鼠标 视角 · Esc 释放鼠标</div>
+</div>
+<div id="start"><h1>EDEN</h1><p>伊甸星 · 点击进入</p><small>一颗被战火与时间改变的行星<br>雪原入口 → 废弃城区 → 雪原峡谷</small></div>
+<div id="load">LOADING</div>
+<script type="importmap">{"imports":{"three":"./vendor/three.module.min.js","three/addons/":"./vendor/addons/"}}</script>
+<script type="module" src="./src/main.js"></script>
+</body>
+</html>
