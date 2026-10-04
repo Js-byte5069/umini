@@ -4,7 +4,7 @@ import { M, rbox, cyl, strut, loft, extrude, slabWithHoles, sculptRock, snowPill
 import { building } from './arch_building.js';
 import { railing } from './arch_infra.js';
 import { rng } from './noise.js';
-import { ASSETS } from './assets.js';
+import { ASSETS, addProp } from './assets.js';
 
 const V = (x, y, z) => new THREE.Vector3(x, y, z);
 
@@ -33,17 +33,10 @@ export function rock({ seed = 1, size = 3, red = false, flat = 0.7, planes = 6, 
 /** big leaning concrete slab (as in the fallen-megastructure concept): tilted rbox with segmented face + snow */
 export function leaningSlab({ w = 14, h = 40, t = 6, tilt = 0.5, seed = 1, red = false }) {
   return (lod, B, col) => {
-    const m = M(0, 0, 0, 0, 0, tilt);
-    B.add(red ? 'accent' : 'wall', rbox(w, h, t, 0.7, lod === 0 ? 4 : 2), M(0, h / 2 * Math.cos(tilt), 0, 0, 0, tilt).multiply(new THREE.Matrix4().identity()));
-    const nseg = lod === 0 ? 4 : 1;
-    if (lod < 2)
-      for (let i = 0; i < nseg; i++) {
-        const y = h * (0.15 + i * 0.2) - h / 2;
-        const mm = M(0, h / 2 * Math.cos(tilt), 0, 0, 0, tilt).multiply(new THREE.Matrix4().makeTranslation(0, y + h * 0.1, t / 2 + 0.2));
-        B.add(red ? 'accentDark' : 'wallLight', rbox(w - 1.6, h * 0.16, 0.5, 0.2, 2), mm);
-        B.add('trim', rbox(w + 0.6, 0.5, t + 0.5, 0.15, 2), M(0, h / 2 * Math.cos(tilt), 0, 0, 0, tilt).multiply(new THREE.Matrix4().makeTranslation(0, y + h * 0.2, 0)));
-      }
-    // buried foot + snow drift
+    const name = (red ? 'slabr' : 'slab') + (Math.abs(seed) % 3);
+    if (!addProp(B, name, lod, M(0, -0.5, 0, 0, 0, tilt, w / 14, h / 40, t / 6))) {
+      B.add(red ? 'accent' : 'wall', rbox(w, h, t, 0.7, lod === 0 ? 4 : 2), M(0, h / 2 * Math.cos(tilt), 0, 0, 0, tilt));
+    }
     if (lod < 2) B.add('snow', snowPillow(w * 1.8, t * 3.4, 2.4, { seed, seg: 18, bury: 1.8 }), M(0, -0.5, 0), { noAO: true, tint: snowTint(seed) });
     const hx = Math.sin(tilt) * h * 0.5;
     col(-w / 2 - hx * 0.2, -1, -t, w / 2, 4.2, t);
@@ -53,14 +46,10 @@ export function leaningSlab({ w = 14, h = 40, t = 6, tilt = 0.5, seed = 1, red =
 export function container({ seed = 1, accent = false }) {
   return (lod, B, col) => {
     const L = 6.1, W = 2.5, H = 2.6;
-    B.add(accent ? 'accentDark' : 'metal', rbox(L, H, W, 0.1, 2), M(0, H / 2 + 0.1, 0));
-    if (lod < 2) {
-      for (let i = -3; i <= 3; i++) {
-        B.add(accent ? 'accent' : 'wallLight', rbox(0.14, H - 0.3, W + 0.14, 0.05, 1), M(i * 0.8, H / 2 + 0.1, 0));
-      }
-      B.add('trim', rbox(L + 0.1, 0.18, W + 0.1, 0.06, 1), M(0, H + 0.1, 0));
-      B.add('snow', snowPillow(L - 0.2, W - 0.1, 0.35, { seed, seg: 10, bury: 0.2 }), M(0, H + 0.12, 0), { noAO: true, tint: snowTint(seed) });
+    if (!addProp(B, 'container0', lod, M(0, 0, 0), accent ? { metal: 'accentDark', wallLight: 'accent' } : {})) {
+      B.add(accent ? 'accentDark' : 'metal', rbox(L, H, W, 0.1, 2), M(0, H / 2 + 0.1, 0));
     }
+    if (lod < 2) B.add('snow', snowPillow(L - 0.2, W - 0.1, 0.35, { seed, seg: 10, bury: 0.2 }), M(0, H + 0.16, 0), { noAO: true, tint: snowTint(seed) });
     col(-L / 2, 0, -W / 2, L / 2, H + 0.2, W / 2);
   };
 }
@@ -70,12 +59,11 @@ export function pipeGantry({ span = 30, h = 11, depth = 7 }) {
   return (lod, B, col) => {
     const hs = span / 2;
     for (const sx of [-1, 1]) {
-      // twin braced legs
+      // twin lattice legs (Blender pylons)
       for (const sz of [-1, 1]) {
-        B.add('wall', loft([
-          { y: -1.5, rx: 1.35, rz: 1.35, n: 4.4 }, { y: h * 0.5, rx: 0.95, rz: 0.95, n: 4.2 }, { y: h, rx: 0.8, rz: 0.8, n: 4 },
-        ].map((s) => ({ ...s, ox: sx * hs, oz: sz * depth / 2 })), { seg: lod === 0 ? 28 : 14 }));
-        B.add('wallDark', rbox(3.2, 1.2, 3.2, 0.3, 3), M(sx * hs, 0.1, sz * depth / 2));
+        if (!addProp(B, 'pylon0', lod, M(sx * hs, -0.3, sz * depth / 2, 0, 0, 0, 1, (h + 0.3) / 12, 1))) {
+          B.add('wall', loft([{ y: -1.5, rx: 1.35, rz: 1.35, n: 4.4 }, { y: h, rx: 0.8, rz: 0.8, n: 4 }].map((s) => ({ ...s, ox: sx * hs, oz: sz * depth / 2 })), { seg: 14 }));
+        }
         col(sx * hs - 1.2, -1, sz * depth / 2 - 1.2, sx * hs + 1.2, h, sz * depth / 2 + 1.2);
       }
       if (lod < 2) B.add('snow', snowPillow(6, depth + 4, 0.9, { seed: sx + 4, seg: 12, bury: 0.4 }), M(sx * hs, -0.2, 0), { noAO: true, tint: snowTint(sx) });

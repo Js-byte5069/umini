@@ -2,6 +2,7 @@
 import * as THREE from 'three';
 import { M, rbox, cyl, strut, loft, extrude, slabWithHoles, ringShape, roundRectPath, snowPillow, snowTint, frame } from './kit.js';
 import { rng, lerp } from './noise.js';
+import { ASSETS, addProp } from './assets.js';
 
 const V = (x, y, z) => new THREE.Vector3(x, y, z);
 
@@ -250,6 +251,27 @@ export function ringGate({ rOut = 17, rIn = 12.2, cy = 9.5 }) {
 
 // ── needle spires: clusters of tapered, stepped obelisks with orange facet slabs ──────────────────────
 export function spireCluster({ seed = 1, count = 4, height = 90, spread = 16, wide = 7 }) {
+  if (ASSETS.props?.spire0) return spireClusterAsset({ seed, count, height, spread, wide });
+  return spireClusterProc({ seed, count, height, spread, wide });
+}
+
+function spireClusterAsset({ seed, count, height, spread, wide }) {
+  return (lod, B, col) => {
+    const r = rng(seed);
+    for (let i = 0; i < count; i++) {
+      const a = (i / count) * Math.PI * 2 + r(), d = i === 0 ? 0 : spread * (0.55 + r() * 0.6);
+      const x = Math.cos(a) * d, z = Math.sin(a) * d;
+      const H = height * (i === 0 ? 1 : 0.4 + r() * 0.45);
+      const w = wide * (i === 0 ? 1 : 0.55 + r() * 0.3);
+      const variant = Math.floor(r() * 6);
+      addProp(B, `spire${(variant + seed) % 6}`, lod, M(x, 0, z, 0, r() * 6.28, 0, w / 6, H / 100, w / 6));
+      if (i === 0) col(x - w, -5, z - w * 0.8, x + w, H * 0.9, z + w * 0.8);
+    }
+    if (lod < 2) B.add('snow', snowPillow(spread * 2.4, spread * 2.4, 3.2, { seed, seg: 18, bury: 2.6 }), M(0, -0.5, 0), { noAO: true, tint: snowTint(seed) });
+  };
+}
+
+function spireClusterProc({ seed = 1, count = 4, height = 90, spread = 16, wide = 7 }) {
   return (lod, B, col) => {
     const r = rng(seed);
     const seg = [44, 30, 22, 14][lod];

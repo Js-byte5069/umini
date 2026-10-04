@@ -1,7 +1,15 @@
 // Blender-authored assets (see ../tools). Geometry only; materials/painting are applied in-engine.
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 
-export const ASSETS = { rocks: null, buildings: null, buildingSpecs: null };
+export const ASSETS = { rocks: null, buildings: null, buildingSpecs: null, props: null };
+
+/** add a Blender prop (spire0, slab1, container0, pylon0 …) to a batch; remap swaps material keys */
+export function addProp(B, name, lod, matrix, remap = {}) {
+  const parts = ASSETS.props?.[name]?.[Math.min(lod, 2)];
+  if (!parts) return false;
+  for (const [mat, geo] of Object.entries(parts)) B.add(remap[mat] ?? mat, geo, matrix);
+  return true;
+}
 
 export async function loadAssets() {
   try {
@@ -18,6 +26,15 @@ export async function loadAssets() {
   } catch (e) {
     console.warn('rock assets unavailable, using procedural fallback', e);
   }
+  try {
+    const gltf = await new GLTFLoader().loadAsync(new URL('../assets/props.glb', import.meta.url).href);
+    const lib = {};
+    gltf.scene.traverse((o) => {
+      const m = o.isMesh && /^(\w+?)_l(\d)_(\w+)$/.exec(o.name);
+      if (m) ((lib[m[1]] ??= [{}, {}, {}])[+m[2]])[m[3]] = o.geometry;
+    });
+    ASSETS.props = lib;
+  } catch (e) { console.warn('prop assets unavailable', e); }
   try {
     const url = (f) => new URL('../assets/' + f, import.meta.url).href;
     const specs = await (await fetch(url('buildings.json'))).json();

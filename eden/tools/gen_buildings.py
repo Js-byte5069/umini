@@ -29,7 +29,7 @@ class Mod:
         self._mat(v, mat)
 
     def cyl(self, c, r, h, mat, seg=20, r2=None, axis='Y'):
-        v = bmesh.ops.create_cone(self.bm, cap_ends=True, cap_tris=False, segments=seg, radius1=r, radius2=r if r2 is None else r2, depth=h)['verts']
+        v = bmesh.ops.create_cone(self.bm, cap_ends=True, cap_tris=False, segments=seg, radius1=r if r2 is None else r2, radius2=r, depth=h)['verts']
         # bmesh cone axis is +Z → rotate to requested axis
         if axis == 'Y': bmesh.ops.rotate(self.bm, cent=(0, 0, 0), matrix=Matrix.Rotation(math.pi / 2, 3, 'X'), verts=v)
         elif axis == 'X': bmesh.ops.rotate(self.bm, cent=(0, 0, 0), matrix=Matrix.Rotation(math.pi / 2, 3, 'Y'), verts=v)
