@@ -1,7 +1,7 @@
 // Blender-authored assets (see ../tools). Geometry only; materials/painting are applied in-engine.
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 
-export const ASSETS = { rocks: null };
+export const ASSETS = { rocks: null, buildings: null, buildingSpecs: null };
 
 export async function loadAssets() {
   try {
@@ -17,5 +17,19 @@ export async function loadAssets() {
     ASSETS.rocks = rocks.length ? rocks : null;
   } catch (e) {
     console.warn('rock assets unavailable, using procedural fallback', e);
+  }
+  try {
+    const url = (f) => new URL('../assets/' + f, import.meta.url).href;
+    const specs = await (await fetch(url('buildings.json'))).json();
+    const gltf = await new GLTFLoader().loadAsync(url('buildings.glb'));
+    const lib = {};   // lib[id][lod][material] = geometry
+    gltf.scene.traverse((o) => {
+      const m = o.isMesh && /^b(\d+)_l(\d)_(\w+)$/.exec(o.name);
+      if (m) ((lib[+m[1]] ??= [{}, {}, {}])[+m[2]])[m[3]] = o.geometry;
+    });
+    ASSETS.buildings = lib;
+    ASSETS.buildingSpecs = specs.buildings;
+  } catch (e) {
+    console.warn('building assets unavailable, using procedural fallback', e);
   }
 }

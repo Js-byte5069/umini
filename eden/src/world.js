@@ -1,11 +1,15 @@
 // Level layout: spawn → entrance snowfield (viaduct gateway) → abandoned city → snow canyon (ring) → factory gate.
 import * as THREE from 'three';
 import { makeStructure, frame, M } from './kit.js';
-import { building } from './arch_building.js';
+import { building, buildingAsset } from './arch_building.js';
+import { ASSETS } from './assets.js';
 import { viaduct, catwalk, stairs, ringGate, spireCluster } from './arch_infra.js';
 import { rock, leaningSlab, container, pipeGantry, ruinWall, factoryGate, transitHall } from './arch_props.js';
 import { heightAt, canyonX, canyonHalfWidthAt, addFootprint, PLATEAU_H, HALF_X } from './terrain.js';
 import { rng } from './noise.js';
+
+import FALLBACK_SPECS_JSON from './fallback_specs.js';
+const FALLBACK_SPECS = FALLBACK_SPECS_JSON;
 
 export async function buildWorld(scene, onProgress = () => {}) {
   const colliders = [];
@@ -22,42 +26,15 @@ export async function buildWorld(scene, onProgress = () => {}) {
     keepClear.push({ x, z, hx: t0.w / 2 + 3, hz: t0.d / 2 + 3 });
     job(() => {
     const y = ground(x, z) - 0.9;
-    put(makeStructure(building(spec), { x, y, z, yaw: opts.yaw ?? 0, lods: [0, 120, 280, 600] }));
+    put(makeStructure(buildingAsset(spec), { x, y, z, yaw: opts.yaw ?? 0, lods: [0, 120, 280, 600] }));
     const sw = opts.yaw ? t0.d : t0.w, sd = opts.yaw ? t0.w : t0.d;
     addFootprint({ x, z, hx: sw / 2 + 0.6, hz: sd / 2 + 0.6, drift: 1.0 });
     });
   };
 
-  // street frame: x=0, from z=138 down to z=22
-  bld(-35, 112, { seed: 4, door: 'x+', roof: 'tank', tiers: [
-    { w: 32, d: 30, h: 28, accent: [{ face: 'x+', x: -7, w: 4.4 }, { face: 'x+', x: 7, w: 4.4 }, { face: 'z+', x: 0, w: 5 }] },
-    { w: 24, d: 22, h: 18, ox: -2, accent: [{ face: 'x+', x: 0, w: 5.4 }] },
-    { w: 15, d: 14, h: 12, ox: -3, accent: [] },
-  ] }, { yaw: 0 });
-  bld(36, 112, { seed: 7, door: 'x-', roof: 'antenna', tiers: [
-    { w: 30, d: 30, h: 24, accent: [{ face: 'x-', x: 0, w: 5.5 }, { face: 'z+', x: -7, w: 4 }] },
-    { w: 20, d: 22, h: 20, ox: 2, accent: [{ face: 'x-', x: 4, w: 4.6 }] },
-  ] });
-  bld(-34, 68, { seed: 12, door: 'x+', roof: 'vents', tiers: [
-    { w: 30, d: 28, h: 20, accent: [{ face: 'x+', x: 0, w: 5 }] },
-    { w: 20, d: 20, h: 14, accent: [] },
-  ] });
-  bld(37, 64, { seed: 15, door: 'x-', roof: 'tank', tiers: [
-    { w: 30, d: 26, h: 34, accent: [{ face: 'x-', x: -6, w: 4.4 }, { face: 'x-', x: 6, w: 4.4 }, { face: 'z+', x: 0, w: 5 }] },
-    { w: 22, d: 18, h: 18, ox: 2, accent: [{ face: 'x-', x: 0, w: 5.2 }] },
-  ] });
-  bld(-76, 96, { seed: 21, roof: 'antenna', tiers: [
-    { w: 28, d: 26, h: 44, accent: [{ face: 'z+', x: -6, w: 4.4 }, { face: 'x+', x: 0, w: 5 }] },
-    { w: 20, d: 18, h: 22, ox: 2, accent: [{ face: 'z+', x: 0, w: 4.4 }] },
-  ] });
-  bld(78, 88, { seed: 23, roof: 'vents', tiers: [
-    { w: 28, d: 28, h: 38, accent: [{ face: 'z+', x: 6, w: 4.4 }, { face: 'x-', x: 0, w: 5 }] },
-    { w: 18, d: 18, h: 18, accent: [] },
-  ] });
-  bld(-40, 30, { seed: 31, door: 'x+', roof: 'vents', tiers: [{ w: 28, d: 26, h: 20, accent: [{ face: 'x+', x: 0, w: 5 }] }, { w: 18, d: 18, h: 10, accent: [] }] });
-  bld(42, 24, { seed: 33, door: 'x-', roof: 'tank', tiers: [{ w: 28, d: 24, h: 24, accent: [{ face: 'x-', x: 0, w: 5 }, { face: 'z+', x: 6, w: 4 }] }, { w: 18, d: 16, h: 12, accent: [] }] });
-  bld(-136, 70, { seed: 41, roof: 'tank', tiers: [{ w: 30, d: 30, h: 48, accent: [{ face: 'z+', x: 0, w: 5.4 }] }, { w: 20, d: 20, h: 22, accent: [] }] });
-  bld(124, 56, { seed: 43, roof: 'antenna', tiers: [{ w: 32, d: 26, h: 40, accent: [{ face: 'z+', x: 0, w: 5.4 }] }, { w: 22, d: 18, h: 20, accent: [] }] });
+  // street buildings: specs shared with the Blender generator (tools/buildings.json)
+  const specs = ASSETS.buildingSpecs ?? FALLBACK_SPECS;
+  for (const sp of specs) bld(sp.x, sp.z, sp, {});
 
   // ── overhead bridge between the two hero buildings + stair up to it ─────────────────────────
   job(() => {

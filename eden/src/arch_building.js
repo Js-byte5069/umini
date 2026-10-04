@@ -3,6 +3,7 @@
 import * as THREE from 'three';
 import { M, rbox, cyl, strut, slabWithHoles, snowPillow, snowTint } from './kit.js';
 import { rng } from './noise.js';
+import { ASSETS } from './assets.js';
 
 const FACE = 1.1;                 // total facade shell thickness (backing 0.5 + skin 0.5 + glass gap 0.1)
 const V = (x, y, z) => new THREE.Vector3(x, y, z);
@@ -219,4 +220,32 @@ class TierBatch {
     this.B.add(key, geo, mm, o);
     return this;
   }
+}
+
+
+/** Building modelled in Blender (tools/gen_buildings.py): wall/window/panel geometry comes from the GLB,
+ *  roof & ledge snow, ground steps and collision are generated from the same spec. */
+export function buildingAsset(spec) {
+  const lib = ASSETS.buildings?.[spec.id];
+  if (!lib) return building(spec);
+  return (lod, B, col) => {
+    const parts = lib[Math.min(lod, 2)];
+    for (const [mat, geo] of Object.entries(parts)) B.add(mat, geo, null);
+    let y0 = 0;
+    const tiers = spec.tiers;
+    tiers.forEach((t, ti) => {
+      const w = t.w, d = t.d, H = t.h, ox = t.ox ?? 0;
+      if (lod < 2) {
+        const up = tiers[ti + 1];
+        if (!up) B.add('snow', snowPillow(w - 2.4, d - 2.4, 0.9, { seed: ti + 3, seg: lod === 0 ? 22 : 12, bury: 0.9 }), M(ox, y0 + H + 0.1, 0), { noAO: true, tint: snowTint(ti) });
+        else {
+          const gz = (d - up.d) / 2;
+          if (gz > 2.2) for (const sg of [-1, 1])
+            B.add('snow', snowPillow(w - 2.4, gz - 0.9, 0.95, { seed: ti * 5 + (sg > 0 ? 1 : 2), seg: 16, bury: 0.8 }), M(ox, y0 + H + 0.05, sg * (d / 2 - gz / 2 - 0.1)), { noAO: true, tint: snowTint(ti + sg) });
+        }
+      }
+      col(ox - w / 2, y0, -d / 2, ox + w / 2, y0 + H + 1.2, d / 2);
+      y0 += H;
+    });
+  };
 }

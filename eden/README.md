@@ -17,6 +17,12 @@ URL 参数:`?q=low` 低画质(2K 阴影、1x 像素比);`?cam=x,z,yaw°,pitch°[
 
 **未完成(规划中)**:地下设施、高地与环带观景台、特殊遗迹区(倒塌巨构区)。
 
+## Blender 资产管线(`tools/`)
+需要 `pip install bpy==4.2.0`,无头运行,输出到 `assets/`:
+- `python3 tools/gen_rocks.py` → `rocks.glb`:10 种雕刻岩石 × 3 级 LOD(最高约 2 万三角面),烘焙遮蔽。
+- `python3 tools/gen_buildings.py [id]` → `buildings.glb`:按 `tools/buildings.json` 建模 10 栋建筑 × 3 级 LOD。墙面嵌板/竖缝窗/大门是网格里真实的凹陷,倒角圆边,扶壁、檐口、栈桥、管道、屋顶设备,烘焙顶点 AO。该 JSON 同时驱动游戏里的摆放、碰撞和积雪。
+- 资产缺失时游戏自动回退到代码生成版本。注意 `buildings.glb` 约 18MB,上线时应开启 gzip/brotli 或后续做网格量化。
+
 ## 技术要点
 - 几何:真实凹陷窗洞(双层立面挤出)、圆角倒角、放样(loft)柱体/尖塔、平滑积雪层、软最小值雕刻岩石;无 Cube+Cone 拼接。
 - 圆环 192 段曲面;每个主要结构 LOD0–LOD3(`THREE.LOD`),远处小物体距离剔除。
