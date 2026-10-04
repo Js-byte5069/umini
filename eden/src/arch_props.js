@@ -105,14 +105,14 @@ export function ruinWall({ w = 16, h = 9, t = 2.4, seed = 1 }) {
   return (lod, B, col) => {
     const r = rng(seed * 13 + 1);
     const s = new THREE.Shape();
-    s.moveTo(-w / 2, 0); s.lineTo(w / 2, 0);
+    s.moveTo(-w / 2, -1.2); s.lineTo(w / 2, -1.2);
     s.lineTo(w / 2, h * 0.84); s.lineTo(w * 0.33, h * (0.96 + r() * 0.08)); s.lineTo(w * 0.17, h * 0.74);
     s.lineTo(-w * 0.05, h * 0.9); s.lineTo(-w * 0.3, h * 0.66); s.lineTo(-w * 0.42, h * 0.8); s.lineTo(-w / 2, h * 0.72); s.closePath();
     const hole = new THREE.Path();
     const ax = w * 0.19, ay1 = h * 0.52;
-    hole.moveTo(-ax, -0.01); hole.lineTo(-ax, ay1 - ax); hole.absarc(0, ay1 - ax, ax, Math.PI, 0, true); hole.lineTo(ax, -0.01); hole.closePath();
+    hole.moveTo(-ax, 0); hole.lineTo(-ax, ay1 - ax); hole.absarc(0, ay1 - ax, ax, Math.PI, 0, true); hole.lineTo(ax, 0); hole.closePath();
     s.holes.push(hole);
-    B.add('wall', extrude(s, t, 0.2, lod === 0 ? 20 : 8, 2, true), M(0, -0.4, -t / 2));
+    B.add('wall', extrude(s, t, 0.2, lod === 0 ? 20 : 8, 2, true), M(0, 0, -t / 2));
     if (lod < 2) {
       // arch ring (extruded half annulus) standing proud of both faces
       const ring = new THREE.Shape();
@@ -201,6 +201,92 @@ export function factoryGate({ span = 112 }) {
       building({ seed: 11 + sx, roof: 'vents', tiers: [
         { w: (span - W) / 2, d: 26, h: 24, blank: 0.4, bay: 5.2, accent: [{ face: 'z+', x: -(span - W) / 8, w: 5 }, { face: 'z+', x: (span - W) / 8, w: 5 }] },
       ] })(lod, F.B, F.col);
+    }
+  };
+}
+
+/** Walk-through transit hall: openings at both ends (±x), interior pillars, roof ribs, glowing ceiling strips. */
+export function transitHall({ L = 34, Wd = 20, H = 9.5, seed = 1 }) {
+  return (lod, B, col) => {
+    const hw = Wd / 2, T = 1.5;
+    // floor
+    B.add('deck', rbox(L + 2, 1.9, Wd + 2, 0.15, 2), M(0, -0.45, 0));
+    col(-L / 2 - 1, -1.5, -hw - 1, L / 2 + 1, 0.5, hw + 1);
+    if (lod < 2) {
+      for (let x = -L / 2 + 2; x < L / 2; x += 4) B.add('wallDark', rbox(0.16, 0.05, Wd - 1, 0.02, 1), M(x, 0.5, 0));
+      for (const sx of [-1, 1]) {
+        B.add('trim', rbox(1.4, 0.26, 12.4, 0.08, 1), M(sx * (L / 2 + 1.7), 0.14, 0));
+        col(sx * (L / 2 + 1.0), -1, -6.2, sx * (L / 2 + 2.4), 0.26, 6.2);
+      }
+    }
+    // long walls: through-slits closed by a glass sheet, framed
+    const slits = [];
+    for (let x = -L / 2 + 3.2; x < L / 2 - 2; x += 4.4) slits.push([x - 0.9, 3.2, x + 0.9, 7.2, 0.5]);
+    for (const sz of [-1, 1]) {
+      const wallGeo = slabWithHoles(L, H, T, lod < 2 ? slits.map((h) => h.slice()) : [], { bevel: 0.1, curveSegments: lod === 0 ? 4 : 2 });
+      // slab spans x∈[-L/2, L/2] about 0; thickness along +z → place with outward z
+      B.add('wall', wallGeo, M(0, 0, sz > 0 ? hw - T : -hw, 0, 0, 0));
+      B.add('glass', rbox(L - 1, H - 2, 0.2, 0.05, 1), M(0, H / 2, sz * (hw - T + 0.35)));
+      if (lod < 2) {
+        B.add('trim', rbox(L + 0.8, 0.6, T + 0.8, 0.15, 2), M(0, 2.2, sz * (hw - T / 2)));
+        B.add('trim', rbox(L + 1.0, 0.9, T + 1.0, 0.2, 2), M(0, H + 0.1, sz * (hw - T / 2)));
+        for (let x = -L / 2 + 1.0; x <= L / 2 - 0.9; x += 4.4) B.add('wallLight', rbox(0.9, H - 0.4, T + 0.5, 0.2, 2), M(x, H / 2, sz * (hw - T / 2)));
+      }
+      col(-L / 2, -1, sz > 0 ? hw - T : -hw, L / 2, H, sz > 0 ? hw : -hw + T);
+    }
+    // end walls with a big arched opening
+    const dw = 5.2, dh = 6.6;
+    for (const sx of [-1, 1]) {
+      const s = new THREE.Shape();
+      roundRectPath(s, -hw, -1, hw, H + 0.6, 0.6);
+      const door = new THREE.Path();
+      door.moveTo(-dw, 0); door.lineTo(-dw, dh - dw * 0.7); door.quadraticCurveTo(-dw, dh, -dw * 0.4, dh); door.lineTo(dw * 0.4, dh);
+      door.quadraticCurveTo(dw, dh, dw, dh - dw * 0.7); door.lineTo(dw, 0); door.closePath();
+      s.holes.push(door);
+      B.add('wall', extrude(s, T, 0.12, lod === 0 ? 10 : 4, 1, false), M(sx * L / 2, 0, 0, 0, sx > 0 ? Math.PI / 2 : -Math.PI / 2, 0).multiply(new THREE.Matrix4().makeTranslation(0, 0, -T)));
+      if (lod < 2) {
+        // door surround + orange lintel slabs
+        const o = new THREE.Shape(); roundRectPath(o, -dw - 1.1, -0.5, dw + 1.1, dh + 1.1, 1.0);
+        const h2 = new THREE.Path();
+        h2.moveTo(-dw, -0.6); h2.lineTo(-dw, dh - dw * 0.7); h2.quadraticCurveTo(-dw, dh, -dw * 0.4, dh); h2.lineTo(dw * 0.4, dh);
+        h2.quadraticCurveTo(dw, dh, dw, dh - dw * 0.7); h2.lineTo(dw, -0.6); h2.closePath(); o.holes.push(h2);
+        B.add('wallLight', extrude(o, 0.8, 0.14, lod === 0 ? 8 : 3, 2), M(sx * (L / 2 + 0.0), 0, 0, 0, sx > 0 ? Math.PI / 2 : -Math.PI / 2, 0));
+        const ry = sx > 0 ? Math.PI / 2 : -Math.PI / 2;
+        B.add('accent', rbox(2.4, 1.4, 0.7, 0.2, 2), M(sx * (L / 2 + 0.55), dh + 1.5, 0, 0, ry, 0));
+        for (const sz of [-1, 1]) {
+          B.add('trim', rbox(1.4, H - 0.6, 0.9, 0.25, 3), M(sx * (L / 2 + 0.3), (H - 0.6) / 2, sz * (dw + 2.6), 0, ry, 0));
+          B.add('trim', rbox(1.4, H - 0.6, 0.9, 0.25, 3), M(sx * (L / 2 + 0.3), (H - 0.6) / 2, sz * (hw - 0.8), 0, ry, 0));
+          for (let k = 0; k < 2; k++) B.add('accent', rbox(2.6, 2.6, 0.5, 0.18, 3), M(sx * (L / 2 + 0.25), 1.8 + k * 3.1, sz * ((dw + hw - 0.8) / 2 + 0.1), 0, ry, 0));
+        }
+        B.add('trim', rbox(Wd + 0.8, 0.5, 0.9, 0.15, 2), M(sx * (L / 2 + 0.3), 3.0, 0, 0, ry, 0));
+      }
+      col(sx * L / 2 - (sx > 0 ? T : 0), -1, -hw, sx * L / 2 + (sx > 0 ? 0 : T), H, -dw - 0.8);
+      col(sx * L / 2 - (sx > 0 ? T : 0), -1, dw + 0.8, sx * L / 2 + (sx > 0 ? 0 : T), H, hw);
+    }
+    // roof slab + arched ribs
+    B.add('wallLight', rbox(L + 1.4, 1.1, Wd + 1.4, 0.3, 3), M(0, H + 0.55, 0));
+    if (lod < 2) {
+      for (let x = -L / 2 + 3; x < L / 2; x += 6) {
+        const rib = new THREE.Shape();
+        rib.moveTo(-hw + T, 0); rib.lineTo(hw - T, 0); rib.lineTo(hw - T, 1.1); rib.absarc(0, 1.1 - 4.2, hw - T, 0.0, Math.PI, false);
+        rib.lineTo(-hw + T, 0);
+        // ceiling rib as a shallow arch band under the roof
+        const band = new THREE.Shape();
+        band.moveTo(-hw + T, 0); band.lineTo(-hw + T, 1.0); band.quadraticCurveTo(0, 3.4, hw - T, 1.0); band.lineTo(hw - T, 0); band.quadraticCurveTo(0, 2.1, -hw + T, 0);
+        B.add('wall', extrude(band, 0.8, 0.1, lod === 0 ? 10 : 4, 1, false), M(x, H - 1.2, 0, 0, Math.PI / 2, 0).multiply(new THREE.Matrix4().makeTranslation(0, 0, -0.4)));
+      }
+      B.add('snow', snowPillow(L - 1.5, Wd - 1.5, 1.0, { seed, seg: 24, bury: 0.8 }), M(0, H + 1.0, 0), { noAO: true, tint: snowTint(seed) });
+      // ceiling light strips + interior pillars
+      for (const sz of [-1, 1]) B.add('glow', rbox(L - 4, 0.22, 0.5, 0.08, 1), M(0, H - 0.5, sz * 3.2));
+      for (let x = -L / 2 + 6; x < L / 2 - 3; x += 6)
+        for (const sz of [-1, 1]) {
+          B.add('trim', loft([
+            { y: 0, rx: 0.9, rz: 0.9, n: 4.4, ox: x, oz: sz * 4.6 }, { y: H * 0.5, rx: 0.62, rz: 0.62, n: 4.2, ox: x, oz: sz * 4.6 },
+            { y: H - 0.3, rx: 0.9, rz: 0.9, n: 4.4, ox: x, oz: sz * 4.6 },
+          ], { seg: lod === 0 ? 24 : 12 }));
+          B.add('accent', rbox(1.25, 0.5, 1.25, 0.12, 2), M(x, 1.4, sz * 4.6));
+          col(x - 0.9, 0, sz * 4.6 - 0.9, x + 0.9, H, sz * 4.6 + 0.9);
+        }
     }
   };
 }

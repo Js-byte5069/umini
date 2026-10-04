@@ -3,26 +3,30 @@ import * as THREE from 'three';
 import { makeStructure, frame, M } from './kit.js';
 import { building } from './arch_building.js';
 import { viaduct, catwalk, stairs, ringGate, spireCluster } from './arch_infra.js';
-import { rock, leaningSlab, container, pipeGantry, ruinWall, factoryGate } from './arch_props.js';
-import { heightAt, canyonX, addFootprint, PLATEAU_H, HALF_X } from './terrain.js';
+import { rock, leaningSlab, container, pipeGantry, ruinWall, factoryGate, transitHall } from './arch_props.js';
+import { heightAt, canyonX, canyonHalfWidthAt, addFootprint, PLATEAU_H, HALF_X } from './terrain.js';
 import { rng } from './noise.js';
 
 export async function buildWorld(scene, onProgress = () => {}) {
   const colliders = [];
   const jobs = [];            // deferred so every structure samples ground before drifts alter the terrain
   const job = (fn) => jobs.push(fn);
+  const keepClear = [];       // rects (centre + half extents) that scatter props must avoid
 
   const put = (s) => { scene.add(s.object); colliders.push(...s.colliders); };
   const ground = (x, z) => heightAt(x, z);
 
   // ── buildings (door faces the street) ────────────────────────────────────────────
-  const bld = (x, z, spec, opts = {}) => job(() => {
+  const bld = (x, z, spec, opts = {}) => {
     const t0 = spec.tiers[0];
+    keepClear.push({ x, z, hx: t0.w / 2 + 3, hz: t0.d / 2 + 3 });
+    job(() => {
     const y = ground(x, z) - 0.9;
     put(makeStructure(building(spec), { x, y, z, yaw: opts.yaw ?? 0, lods: [0, 120, 280, 600] }));
     const sw = opts.yaw ? t0.d : t0.w, sd = opts.yaw ? t0.w : t0.d;
     addFootprint({ x, z, hx: sw / 2 + 0.6, hz: sd / 2 + 0.6, drift: 1.0 });
-  });
+    });
+  };
 
   // street frame: x=0, from z=138 down to z=22
   bld(-35, 112, { seed: 4, door: 'x+', roof: 'tank', tiers: [
@@ -52,7 +56,7 @@ export async function buildWorld(scene, onProgress = () => {}) {
   ] });
   bld(-40, 30, { seed: 31, door: 'x+', roof: 'vents', tiers: [{ w: 28, d: 26, h: 20, accent: [{ face: 'x+', x: 0, w: 5 }] }, { w: 18, d: 18, h: 10, accent: [] }] });
   bld(42, 24, { seed: 33, door: 'x-', roof: 'tank', tiers: [{ w: 28, d: 24, h: 24, accent: [{ face: 'x-', x: 0, w: 5 }, { face: 'z+', x: 6, w: 4 }] }, { w: 18, d: 16, h: 12, accent: [] }] });
-  bld(-120, 60, { seed: 41, roof: 'tank', tiers: [{ w: 30, d: 30, h: 48, accent: [{ face: 'z+', x: 0, w: 5.4 }] }, { w: 20, d: 20, h: 22, accent: [] }] });
+  bld(-136, 70, { seed: 41, roof: 'tank', tiers: [{ w: 30, d: 30, h: 48, accent: [{ face: 'z+', x: 0, w: 5.4 }] }, { w: 20, d: 20, h: 22, accent: [] }] });
   bld(124, 56, { seed: 43, roof: 'antenna', tiers: [{ w: 32, d: 26, h: 40, accent: [{ face: 'z+', x: 0, w: 5.4 }] }, { w: 22, d: 18, h: 20, accent: [] }] });
 
   // ── overhead bridge between the two hero buildings + stair up to it ─────────────────────────
@@ -63,6 +67,16 @@ export async function buildWorld(scene, onProgress = () => {}) {
       stairs(B, lod, col, { x: -14, z: 2.3 + 15.3, y: ground(-14, 125), rise: y - ground(-14, 125), dir: Math.PI, width: 3.6 });
     }, { x: 0, y: 0, z: 107, lods: [0, 140, 300, 600] }));
   });
+
+  // optional branch: walk-through hall west of the street (outdoor yard → indoors → outdoor)
+  keepClear.push({ x: -86, z: 49, hx: 22, hz: 14 }, { x: -62, z: 49, hx: 8, hz: 8 });
+  job(() => {
+    const x = -86, z = 49, y = ground(x, z);
+    put(makeStructure(transitHall({ L: 34, Wd: 20, H: 9.5, seed: 5 }), { x, y: y - 0.1, z, lods: [0, 120, 280, 600] }));
+    addFootprint({ x, z, hx: 18.5, hz: 11, drift: 0 });
+  });
+  [[-64, 53, 0, 1], [-114, 40, 0, 0], [-116, 57, Math.PI / 2, 1]].forEach(([cx, cz, yaw, a], i) =>
+    job(() => put(makeStructure(container({ seed: 50 + i, accent: !!a }), { x: cx, y: ground(cx, cz) - 0.1, z: cz, yaw, lods: [0, 90, 220], cull: 520 }))));
 
   // pipe gantry across the street, containers and ruins as cover
   job(() => put(makeStructure(pipeGantry({ span: 32, h: 11 }), { x: 0, y: ground(0, 80) - 0.3, z: 80, lods: [0, 130, 300, 600] })));
@@ -143,6 +157,7 @@ export async function buildWorld(scene, onProgress = () => {}) {
         const y = ground(x, z);
         if (y > 3 + (z < 20 ? -40 : 0) && y > ground(x + 3, z) + 6) continue;
         // keep the central route readable, avoid overlapping buildings
+        if (keepClear.some((k) => Math.abs(x - k.x) < k.hx && Math.abs(z - k.z) < k.hz)) continue;
         if (z > 36 && z < 140 && Math.abs(x) < 20) continue;
         if (z < 34 && z > -195 && Math.abs(x - canyonX(z)) < 11) continue;   // keep the canyon route open
         if (Math.abs(x) < 8 && z > 150 && z < 250 && r() < 0.8) continue;
@@ -150,7 +165,7 @@ export async function buildWorld(scene, onProgress = () => {}) {
         const sd = Math.floor(r() * 1e5);
         job(() => {
           const g = ground(x, z);
-          put(makeStructure(rock({ seed: sd, size: sz, red: r() < redP, planes: 5 + Math.floor(r() * 4) }), { x, y: g - sz * 0.15, z, yaw: r() * 6.28, lods: [0, 90, 220], cull: 480, cast: sz > 1.5 }));
+          put(makeStructure(rock({ seed: sd, size: sz, red: r() < redP, planes: 5 + Math.floor(r() * 4) }), { x, y: g - sz * 0.15, z, yaw: r() * 6.28, lods: [0, 90, 220], cull: 480, cast: sz > 4 }));
         });
         ok++;
       }
@@ -160,9 +175,15 @@ export async function buildWorld(scene, onProgress = () => {}) {
       job(() => put(makeStructure(rock({ seed: Math.floor(x * 7 + z), size: sz, red, planes: 7 }), { x, y: ground(x, z) - sz * 0.2, z, yaw: x, lods: [0, 90, 220], cull: 520 })));
     tryPlace(-110, 110, 40, 140, 10, 1.5, 3.2, 0.3);     // city rubble
     for (let z = 20; z > -190; z -= 20) tryPlace(canyonX(z) - 38, canyonX(z) + 38, z - 10, z + 10, 3, 1.8, 6.5, 0.4); // canyon floor
-    for (let z = 20; z > -190; z -= 26) { // outcrops hugging the walls
-      tryPlace(canyonX(z) - 56, canyonX(z) - 38, z - 12, z + 12, 1, 4, 9, 0.5);
-      tryPlace(canyonX(z) + 38, canyonX(z) + 56, z - 12, z + 12, 1, 4, 9, 0.5);
+    for (let z = 20; z > -190; z -= 22) { // outcrops hugging the walls
+      tryPlace(canyonX(z) - 56, canyonX(z) - 36, z - 11, z + 11, 1, 5, 11, 0.5);
+      tryPlace(canyonX(z) + 36, canyonX(z) + 56, z - 11, z + 11, 1, 5, 11, 0.5);
+    }
+    // massive sculpted buttresses breaking up the canyon contour lines
+    for (let z = 12; z > -190; z -= 34) for (const side of [-1, 1]) {
+      const x = canyonX(z) + side * (canyonHalfWidthAt(z) + 3 + r() * 9);
+      const sz = 12 + r() * 12, sd = Math.floor(r() * 1e5), red = r() < 0.4;
+      job(() => put(makeStructure(rock({ seed: sd, size: sz, red, planes: 7, flat: 0.8, squash: 1.1 }), { x, y: ground(x, z) - sz * 0.35, z: z + (r() - 0.5) * 12, yaw: r() * 6.28, lods: [0, 120, 260], cull: 700 })));
     }
   }
 

@@ -12,6 +12,7 @@ export const PLATEAU_H = 64;    // height of the high outer plateau that frames 
 
 // ── layout helpers ────────────────────────────────────────────────────────────
 export const canyonX = (z) => 9 * Math.sin(z * 0.017 + 0.6);
+export const canyonHalfWidthAt = (z) => canyonHalfWidth(z);
 const gauss = (x, c, w) => Math.exp(-(((x - c) / w) ** 2));
 const canyonHalfWidth = (z) =>
   44 + 100 * sstep(4, 50, z) - 15 * gauss(z, -58, 30) + 9 * gauss(z, -128, 28);
@@ -70,8 +71,10 @@ export function heightAt(x, z) {
   const cm = sstep(32, -2, z);
   h += canyonFloor(z);
   const warp = N.n2(x * 0.03, z * 0.03) * 6 + N.n2(x * 0.06, z * 0.06) * 1.5;
-  const dx = Math.abs(x - cx) + warp;
-  const wallT = sstep(0, 62, dx - canyonHalfWidth(z));
+  const bulge = 9 * sstep(0.1, 0.7, N.n2(z * 0.032 + 5, 0.5 + Math.sign(x - cx) * 2.3)) + 5 * N.n2(z * 0.09, Math.sign(x - cx) * 7.1);
+  const dx = Math.abs(x - cx) + warp - bulge;
+  const wander = 0.06 * N.n2(x * 0.025, z * 0.025) + 0.035 * N.n2(x * 0.07 + 4, z * 0.07);
+  const wallT = clamp(sstep(0, 62, dx - canyonHalfWidth(z)) + wander * sstep(0, 0.2, sstep(0, 62, dx - canyonHalfWidth(z))));
   h += cm * (PLATEAU_H - 8) * terrace(wallT, 6, 0.42) * (0.94 + 0.06 * N.n2(x * 0.05, z * 0.05));
   // talus at wall base
   h += cm * 2.2 * sstep(-7, 3, dx - canyonHalfWidth(z)) * (1 - wallT);
@@ -85,9 +88,10 @@ export function heightAt(x, z) {
   }
 
   // outer frame
-  const bx = Math.max(0, Math.abs(x) - HALF_X + warp * 0.5);
-  const bzs = Math.max(0, z - Z_START + 6 + warp * 0.5);
-  const bzn = Math.max(0, Z_END - z - 0 + warp * 0.5);
+  const pw = warp * 1.6 + 14 * N.n2(x * 0.011 + 2, z * 0.011);
+  const bx = Math.max(0, Math.abs(x) - HALF_X + pw);
+  const bzs = Math.max(0, z - Z_START + 6 + pw);
+  const bzn = Math.max(0, Z_END - z + pw);
   const b = Math.max(bx, bzs, bzn);
   h = lerp(h, PLATEAU_H + 6 * N.n2(x * 0.02, z * 0.02), terrace(sstep(0, 70, b), 5, 0.4));
 
@@ -121,14 +125,24 @@ const CHUNK = 64;
 const LOD_SEGS = [128, 96, 64, 40];
 const LOD_DIST = [110, 220, 380];
 
+const BLUR = [2, 2, 1, 1];
 function buildChunk(cx, cz, lod) {
   const segs = LOD_SEGS[lod];
   const step = CHUNK / segs;
   const x0 = cx * CHUNK, z0 = cz * CHUNK;
-  const n = segs + 1, pn = n + 4;
+  const n = segs + 1, P = 5, pn = n + 2 * P;
   const H = new Float32Array(pn * pn);
   for (let j = 0; j < pn; j++)
-    for (let i = 0; i < pn; i++) H[j * pn + i] = heightAt(x0 + (i - 2) * step, z0 + (j - 2) * step);
+    for (let i = 0; i < pn; i++) H[j * pn + i] = heightAt(x0 + (i - P) * step, z0 + (j - P) * step);
+  // per-point gradient on the padded grid (indices 2..pn-3), blending 1- and 2-cell central differences
+  const GX = new Float32Array(pn * pn), GZ = new Float32Array(pn * pn);
+  for (let j = 2; j < pn - 2; j++)
+    for (let i = 2; i < pn - 2; i++) {
+      const c0 = j * pn + i;
+      GX[c0] = ((H[c0 + 1] - H[c0 - 1]) / (2 * step) + (H[c0 + 2] - H[c0 - 2]) / (4 * step)) * 0.5;
+      GZ[c0] = ((H[c0 + pn] - H[c0 - pn]) / (2 * step) + (H[c0 + 2 * pn] - H[c0 - 2 * pn]) / (4 * step)) * 0.5;
+    }
+  const R = BLUR[lod];
 
   const skirt = 3.5;
   const verts = n * n + 4 * n;
@@ -138,12 +152,18 @@ function buildChunk(cx, cz, lod) {
   for (let j = 0; j < n; j++) {
     for (let i = 0; i < n; i++) {
       const k = j * n + i;
-      const c0 = (j + 2) * pn + i + 2;
+      const c0 = (j + P) * pn + i + P;
       const h = H[c0];
       const x = x0 + i * step, z = z0 + j * step;
-      // blend 1-cell and 2-cell central differences: stable contours on steep terraces
-      const hx = ((H[c0 + 1] - H[c0 - 1]) / (2 * step) + (H[c0 + 2] - H[c0 - 2]) / (4 * step)) * 0.5;
-      const hz = ((H[c0 + pn] - H[c0 - pn]) / (2 * step) + (H[c0 + 2 * pn] - H[c0 - 2 * pn]) / (4 * step)) * 0.5;
+      // box blur of the gradient field → smooth, alias-free terrace contours and lighting
+      let hx = 0, hz = 0, cnt = 0, mk = 0;
+      for (let dj = -R; dj <= R; dj++)
+        for (let di = -R; di <= R; di++) {
+          const q = c0 + dj * pn + di;
+          hx += GX[q]; hz += GZ[q]; cnt++;
+          mk += rockMask(1 / Math.hypot(GX[q], 1, GZ[q]));
+        }
+      hx /= cnt; hz /= cnt; mk /= cnt;
       const l = Math.hypot(hx, 1, hz);
       pos[k * 3] = x; pos[k * 3 + 1] = h; pos[k * 3 + 2] = z;
       nor[k * 3] = -hx / l; nor[k * 3 + 1] = 1 / l; nor[k * 3 + 2] = -hz / l;
@@ -152,7 +172,7 @@ function buildChunk(cx, cz, lod) {
       if (hasFoot) ao = footprintField(x, z).ao;
       c.multiply(tmp.setRGB(1 - 0.24 * ao, 1 - 0.19 * ao, 1 - 0.07 * ao));
       col[k * 3] = c.r; col[k * 3 + 1] = c.g; col[k * 3 + 2] = c.b;
-      tr[k * 2] = rockMask(1 / l); tr[k * 2 + 1] = 1 - 0.3 * ao;
+      tr[k * 2] = mk; tr[k * 2 + 1] = 1 - 0.3 * ao;
     }
   }
   // skirts hide cracks between neighbouring LOD levels

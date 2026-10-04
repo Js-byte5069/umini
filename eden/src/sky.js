@@ -87,26 +87,33 @@ export function createSky(scene) {
   moon.position.copy(new THREE.Vector3(0.12, 0.33, -0.93).normalize()).multiplyScalar(3900);
   g.add(moon);
 
-  // cumulus: clustered spheres, cel lit so tops are white and bellies cool blue
-  const cloudMat = new THREE.MeshToonMaterial({ color: 0xffffff, gradientMap: RAMP, fog: false, emissive: 0x7f9fe0, emissiveIntensity: 0.35 });
+  // cumulus: tight clusters of overlapping lobes with flattened bellies; cel lit → white tops, cool blue undersides
+  const cloudMat = new THREE.MeshToonMaterial({ color: 0xffffff, gradientMap: RAMP, fog: false, emissive: 0x8aa6e6, emissiveIntensity: 0.3 });
   const r = rng(77);
   const clouds = new THREE.Group();
-  const unit = new THREE.SphereGeometry(1, 28, 18);
-  for (let i = 0; i < 34; i++) {
+  const unit = new THREE.SphereGeometry(1, 32, 20);
+  for (let i = 0; i < 40; i++) {
     const ang = r() * Math.PI * 2;
-    const dist = 1500 + r() * 2200;
+    const dist = 1400 + r() * 2600;
     const cl = new THREE.Group();
-    const n = 5 + Math.floor(r() * 6);
-    const base = 70 + r() * 90;
+    const n = 7 + Math.floor(r() * 7);
+    const base = 90 + r() * 120;
     for (let k = 0; k < n; k++) {
-      const s = base * (0.5 + r() * 0.7) * (1 - Math.abs(k - n / 2) / n * 0.7);
+      const u = (k + 0.5) / n - 0.5;
+      const bump = 1 - Math.abs(u) * 1.5;
+      const s2 = base * (0.45 + 0.7 * r()) * (0.5 + bump * 0.7);
       const m = new THREE.Mesh(unit, cloudMat);
-      m.position.set((k - n / 2) * base * 0.8, s * 0.25 * r(), (r() - 0.5) * base * 0.6);
-      m.scale.set(s, s * 0.78, s * 0.9);
+      m.position.set(u * base * 3.4, s2 * (0.15 + 0.5 * bump * r()), (r() - 0.5) * base * 0.8);
+      m.scale.set(s2 * 1.25, s2 * 0.72, s2 * 0.95);
       cl.add(m);
     }
-    cl.position.set(Math.cos(ang) * dist, 160 + r() * 520, Math.sin(ang) * dist);
-    cl.rotation.y = r() * 6;
+    // flat belly
+    const belly = new THREE.Mesh(unit, cloudMat);
+    belly.scale.set(base * 2.2, base * 0.28, base * 0.9);
+    belly.position.y = -base * 0.02;
+    cl.add(belly);
+    cl.position.set(Math.cos(ang) * dist, 70 + r() * 360, Math.sin(ang) * dist);
+    cl.rotation.y = -ang + Math.PI / 2 + (r() - 0.5) * 0.6;
     clouds.add(cl);
   }
   g.add(clouds);

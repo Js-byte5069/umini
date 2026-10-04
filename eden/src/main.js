@@ -9,11 +9,12 @@ if (params.has('shot')) document.body.classList.add('shot');
 
 const canvas = document.getElementById('c');
 const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: 'high-performance', preserveDrawingBuffer: params.has('shot') });
-renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+const LOW = params.get('q') === 'low';
+renderer.setPixelRatio(LOW ? 1 : Math.min(devicePixelRatio, 2));
 renderer.setSize(innerWidth, innerHeight);
 renderer.outputColorSpace = THREE.SRGBColorSpace;
 renderer.toneMapping = THREE.NoToneMapping;
-renderer.shadowMap.enabled = true;
+renderer.shadowMap.enabled = !params.has('ns');
 renderer.shadowMap.type = THREE.PCFShadowMap;
 
 const scene = new THREE.Scene();
@@ -25,11 +26,12 @@ const camera = new THREE.PerspectiveCamera(68, innerWidth / innerHeight, 0.1, 90
 // lighting: warm key sun with hard cel terminator + strong cool ambient for blue shadows
 const sun = new THREE.DirectionalLight(0xfff4e6, 2.25);
 sun.castShadow = true;
-sun.shadow.mapSize.set(4096, 4096);
+const SM = LOW ? 2048 : 4096;
+sun.shadow.mapSize.set(SM, SM);
 const SH = 150;
 Object.assign(sun.shadow.camera, { left: -SH, right: SH, top: SH, bottom: -SH, near: 1, far: 700 });
-sun.shadow.bias = -0.0004;
-sun.shadow.normalBias = 0.35;
+sun.shadow.bias = parseFloat(params.get('bias') ?? '-0.0004');
+sun.shadow.normalBias = parseFloat(params.get('nb') ?? '0.35');
 scene.add(sun, sun.target);
 scene.add(new THREE.HemisphereLight(0xa9c4ff, 0x8396e0, 2.05));
 
@@ -73,7 +75,7 @@ function frame() {
   sky.update(camera.position);
 
   // shadow frustum follows the player, snapped to texel grid to avoid shimmer
-  const texel = (SH * 2) / 4096;
+  const texel = (SH * 2) / SM;
   const sx = Math.round(camera.position.x / texel) * texel, sz = Math.round(camera.position.z / texel) * texel;
   sun.target.position.set(sx, camera.position.y * 0.5, sz);
   sun.position.copy(sun.target.position).addScaledVector(SUN_DIR, 350);

@@ -22,12 +22,12 @@ export const PAL = {
 };
 
 // 3-tone cel ramp: shadow / thin terminator band / lit
-function makeRamp() {
+function makeRamp(shadowBelow = 0.04, litAbove = 0.45) {
   const n = 256;
   const data = new Uint8Array(n);
   for (let i = 0; i < n; i++) {
     const ndl = (i / (n - 1)) * 2 - 1;
-    data[i] = ndl < 0.04 ? 0 : ndl < 0.45 ? 168 : 255;
+    data[i] = ndl < shadowBelow ? 0 : ndl < litAbove ? 168 : 255;
   }
   const t = new THREE.DataTexture(data, n, 1, THREE.RedFormat);
   t.minFilter = t.magFilter = THREE.NearestFilter;
@@ -36,6 +36,8 @@ function makeRamp() {
   return t;
 }
 export const RAMP = makeRamp();
+// terrain: wavy rock walls graze the sun, so keep the dark band for faces that truly turn away
+export const RAMP_TERRAIN = makeRamp(-0.75, 0.45);
 
 const SNOW_GLSL = /* glsl */ `
   float topK = vWN.y + 0.05 * sin(vWP.x * 0.7 + vWP.z * 0.3) * sin(vWP.z * 0.9 - vWP.x * 0.2);
@@ -95,7 +97,7 @@ export const MAT = {
 // snow geometry should never take the painted-snow patch; plain pale colour with shaded vertex colour
 MAT.snow.color.set(0xffffff);
 
-export const terrainMaterial = new THREE.MeshToonMaterial({ vertexColors: true, gradientMap: RAMP });
+export const terrainMaterial = new THREE.MeshToonMaterial({ vertexColors: true, gradientMap: RAMP_TERRAIN });
 terrainMaterial.onBeforeCompile = (sh) => {
   sh.vertexShader = sh.vertexShader
     .replace('#include <common>', '#include <common>\nattribute vec2 tr;\nvarying vec2 vTr;\nvarying vec3 vTP;')
@@ -118,10 +120,12 @@ float h11(float n){ return fract(sin(n*12.9898)*43758.5453); }`)
   vec3 rockB = vec3(0.075, 0.090, 0.215);
   vec3 redA  = vec3(0.560, 0.105, 0.075);
   vec3 redB  = vec3(0.330, 0.062, 0.050);
-  vec3 rc = red ? mix(redA, redB, smoothstep(0.5, 1.0, bp)*0.65) : mix(rockA, rockB, smoothstep(0.55, 1.0, bp)*0.7);
+  float vary = sin(vTP.y*1.7 + sin(vTP.x*0.05 + vTP.z*0.04)*2.0) * 0.5 + 0.5;
+  vec3 rc = red ? mix(redA, redB, smoothstep(0.5, 1.0, bp)*0.4) : mix(rockA, rockB, smoothstep(0.55, 1.0, bp)*0.3 + vary*0.1);
   rc *= vTr.y;
   float m = smoothstep(0.32, 0.62, vTr.x);
   diffuseColor.rgb = mix(diffuseColor.rgb, rc, m);
 }`);
 };
+terrainMaterial.shadowSide = THREE.FrontSide;
 terrainMaterial.customProgramCacheKey = () => 'terrain-strata';
