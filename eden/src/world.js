@@ -8,6 +8,7 @@ import { rock, leaningSlab, container, pipeGantry, ruinWall, factoryGate, transi
 import { heightAt, canyonX, canyonHalfWidthAt, addFootprint, PLATEAU_H, HALF_X } from './terrain.js';
 import { rng } from './noise.js';
 import { scatterWorld } from './scatter.js';
+import { loadDressing, dressingWorld } from './dressing.js';
 
 import FALLBACK_SPECS_JSON from './fallback_specs.js';
 const FALLBACK_SPECS = FALLBACK_SPECS_JSON;
@@ -162,6 +163,11 @@ export async function buildWorld(scene, onProgress = () => {}) {
       spire(canyonX(z) + side * (88 + r() * 20), z, 200 + i, 3, 70 + r() * 40, 12, 5, 40);
     }
   }
+
+  // ── ground dressing (src/dressing.js): debris / wrecks / buried ruin pieces that fill the walking lanes ───────
+  await loadDressing();
+  const dress = dressingWorld({ job, put, ground, keepClear, colliders });
+  console.info('dressing items ' + dress.items);
 
   // ── boulder scatter (src/scatter.js): hand-placed hero clusters + noise-clustered fields ───────────────
   const scat = scatterWorld({ job, put, ground, keepClear });
