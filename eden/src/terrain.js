@@ -1,7 +1,7 @@
 // Analytic height-field world: the same function drives rendering, collision and prop placement.
 import * as THREE from 'three';
 import { makeNoise, clamp, lerp, sstep, rng } from './noise.js';
-import { terrainMaterial, makeTerrainMaterial, setTerrainTexture } from './materials.js';
+import { terrainMaterial, makeTerrainMaterial, setTerrainTexture } from './terrain_material.js';
 
 const N = makeNoise(20240611);
 
