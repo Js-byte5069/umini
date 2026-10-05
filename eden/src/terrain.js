@@ -24,33 +24,52 @@ const canyonHalfWidth = (z) =>
   44 + 100 * sstep(4, 50, z) - 15 * gauss(z, -58, 30) + 9 * gauss(z, -128, 28);
 const canyonFloor = (z) => -17 * sstep(14, -58, z) - 2.5 * sstep(-60, -170, z);
 
-// Registered building footprints: snow drifts pile against them and ground AO darkens around them
+// Registered footprints (buildings, props, walls): snow drifts pile against them and ground AO darkens around them.
+// f = { x, z, hx, hz, drift, reach? } (reach: bank width in m, default 6.5; small props pass a smaller one)
 export const FOOTPRINTS = [];
 export function addFootprint(f) { FOOTPRINTS.push(f); }
 
+const FP_CELL = 32, FP_MARGIN = 16;
+const fpGrid = new Map();
+let fpIndexed = 0;
+const FP_NONE = Object.freeze({ drift: 0, ao: 0 });
+/** bins footprints added since the last query into 32 m cells (incremental: world.js keeps registering while it builds) */
+function fpIndex() {
+  for (; fpIndexed < FOOTPRINTS.length; fpIndexed++) {
+    const f = FOOTPRINTS[fpIndexed];
+    const reach = Math.max(FP_MARGIN, (f.reach ?? 0) * 2 + 1, (f.aoR ?? 0) + 1);
+    const i0 = Math.floor((f.x - f.hx - reach) / FP_CELL), i1 = Math.floor((f.x + f.hx + reach) / FP_CELL);
+    const j0 = Math.floor((f.z - f.hz - reach) / FP_CELL), j1 = Math.floor((f.z + f.hz + reach) / FP_CELL);
+    for (let j = j0; j <= j1; j++) for (let ii = i0; ii <= i1; ii++) { const k = ii * 4096 + j; const a = fpGrid.get(k); if (a) a.push(f); else fpGrid.set(k, [f]); }
+  }
+}
 function footprintField(x, z) {
+  if (fpIndexed !== FOOTPRINTS.length) fpIndex();
+  const list = fpGrid.get(Math.floor(x / FP_CELL) * 4096 + Math.floor(z / FP_CELL));
+  if (!list) return FP_NONE;
   let drift = 0, ao = 0;
-  for (let i = 0; i < FOOTPRINTS.length; i++) {
-    const f = FOOTPRINTS[i];
+  for (let i = 0; i < list.length; i++) {
+    const f = list[i];
     const qx = Math.abs(x - f.x) - f.hx, qz = Math.abs(z - f.z) - f.hz;
-    if (qx > 16 || qz > 16) continue;
+    const R = f.reach ?? 6.5, aoR = f.aoR ?? 3.2, lim = Math.max(R * 2, aoR) + 1;
+    if (qx > lim || qz > lim) continue;
     const d = Math.hypot(Math.max(qx, 0), Math.max(qz, 0)) + Math.min(Math.max(qx, qz), 0);
     const amp = (f.drift ?? 0.8) * 1.5;
     const wob = 0.75 + 0.25 * Math.sin(x * 0.31 + z * 0.23);
-    drift = Math.max(drift, amp * sstep(6.5, 0.2, d) * wob);
+    drift = Math.max(drift, amp * sstep(R, 0.2, d) * wob);
     if (amp > 0.3) {
       // wind tail: the same bank slid downwind, lower and longer, with a ridged crest line (lee drift)
-      const tx = x - WIND_X * 6.5, tz = z - WIND_Z * 6.5;
+      const tx = x - WIND_X * R, tz = z - WIND_Z * R;
       const ux = Math.abs(tx - f.x) - f.hx, uz = Math.abs(tz - f.z) - f.hz;
-      if (ux < 7 && uz < 7) {
+      if (ux < R + 0.5 && uz < R + 0.5) {
         const dt = Math.hypot(Math.max(ux, 0), Math.max(uz, 0)) + Math.min(Math.max(ux, uz), 0);
         const crest = 0.85 + 0.15 * Math.cos((dt - 1.5) * 1.1);
-        drift = Math.max(drift, amp * 0.5 * sstep(5.6, 0.4, dt) * crest * (0.8 + 0.2 * Math.sin(x * 0.17 - z * 0.21)));
+        drift = Math.max(drift, amp * 0.5 * sstep(R * 0.86, 0.4, dt) * crest * (0.8 + 0.2 * Math.sin(x * 0.17 - z * 0.21)));
       }
     }
-    ao = Math.max(ao, sstep(3.2, 0, d));
+    ao = Math.max(ao, sstep(aoR, 0, d));
   }
-  return { drift, ao };
+  return drift === 0 && ao === 0 ? FP_NONE : { drift, ao };
 }
 const WIND_X = 0.906, WIND_Z = 0.423;
 
@@ -161,73 +180,325 @@ function duneDetail(x, z) {
   return crest * 2.3 + crest2 * 0.7 + crest3 * 0.22 + N.n2(wx * 0.1, wz * 0.18) * 0.3;
 }
 
+// Per-cell feature tables: jittered-grid features are described once per cell (typed arrays, filled lazily), so a height query only pays for
+// arithmetic on the nine cells around it. fill(i, j, t, o) writes a cell's descriptor at t[o + 1...] and returns whether the cell holds a feature;
+// cells outside the cached domain are described on the fly into a scratch buffer (same code, same result).
+function makeCells(half, stride, fill) {
+  const n = 2 * half, tab = new Float32Array(n * n * stride), ok = new Uint8Array(n * n), scratch = new Float32Array(stride);
+  const c = {
+    t: tab,
+    /** offset of cell (i, j)'s descriptor in c.t, or -1 for an empty cell */
+    at(i, j) {
+      const ii = i + half, jj = j + half;
+      if (ii < 0 || jj < 0 || ii >= n || jj >= n) { c.t = scratch; return fill(i, j, scratch, 0) ? 0 : -1; }
+      c.t = tab;
+      const idx = ii * n + jj, o = idx * stride;
+      if (!ok[idx]) { ok[idx] = 1; tab[o] = fill(i, j, tab, o) ? 1 : 0; }
+      return tab[o] ? o : -1;
+    },
+  };
+  return c;
+}
+
 // scattered wind-sculpted snow mounds (real geometry, so they collide): jittered hash grid, elongated along the wind
 const MC = 30;
+const moundCells = makeCells(64, 6, (i, j, t, o) => {
+  const k = i * 7919 + j * 104729 + 17;
+  if (hsh(k) > 0.62) return false;
+  t[o + 1] = (i + 0.12 + 0.76 * hsh(k + 1)) * MC; t[o + 2] = (j + 0.12 + 0.76 * hsh(k + 2)) * MC;
+  t[o + 3] = 4.5 + 8 * hsh(k + 3); t[o + 4] = 0.45 + 1.15 * hsh(k + 4); t[o + 5] = 1.4 + 1.3 * hsh(k + 5);
+  return true;
+});
 function mounds(x, z) {
   const ci = Math.floor(x / MC), cj = Math.floor(z / MC);
   let h = 0;
   for (let j = cj - 1; j <= cj + 1; j++)
     for (let i = ci - 1; i <= ci + 1; i++) {
-      const k = i * 7919 + j * 104729 + 17;
-      if (hsh(k) > 0.62) continue;
-      const mx = (i + 0.12 + 0.76 * hsh(k + 1)) * MC, mz = (j + 0.12 + 0.76 * hsh(k + 2)) * MC;
-      const R = 4.5 + 8 * hsh(k + 3), Hh = 0.45 + 1.15 * hsh(k + 4), asp = 1.4 + 1.3 * hsh(k + 5);
-      const dx = x - mx, dz = z - mz;
+      const o = moundCells.at(i, j);
+      if (o < 0) continue;
+      const t = moundCells.t, R = t[o + 3], Hh = t[o + 4], asp = t[o + 5];
+      const dx = x - t[o + 1], dz = z - t[o + 2];
       const u = (dx * 0.906 + dz * 0.423) / (R * asp), v = (-dx * 0.423 + dz * 0.906) / R;
       const d2 = u * u + v * v;
-      if (d2 < 1) { const t = 1 - d2; h += Hh * t * t * (1.0 + 0.5 * (1 - d2)); }
+      if (d2 < 1) { const q = 1 - d2; h += Hh * q * q * (1.0 + 0.5 * (1 - d2)); }
     }
   return h;
 }
 
 // wind-packed hummocks: small elongated snow lumps (walkable, 0.2-0.55 m) that give eye-level snow real relief and crisp terminators
 const HC = 11;
+const hummockCells = makeCells(80, 6, (i, j, t, o) => {
+  const k = i * 15731 + j * 789221 + 3;
+  if (hsh(k) > 0.8) return false;
+  t[o + 1] = (i + 0.1 + 0.8 * hsh(k + 1)) * HC; t[o + 2] = (j + 0.1 + 0.8 * hsh(k + 2)) * HC;
+  t[o + 3] = 2.2 + 3.4 * hsh(k + 3); t[o + 4] = 0.10 + 0.24 * hsh(k + 4); t[o + 5] = 1.9 + 1.5 * hsh(k + 5);
+  return true;
+});
 function hummocks(x, z) {
   const ci = Math.floor(x / HC), cj = Math.floor(z / HC);
   let h = 0;
   for (let j = cj - 1; j <= cj + 1; j++)
     for (let i = ci - 1; i <= ci + 1; i++) {
-      const k = i * 15731 + j * 789221 + 3;
-      if (hsh(k) > 0.8) continue;
-      const mx = (i + 0.1 + 0.8 * hsh(k + 1)) * HC, mz = (j + 0.1 + 0.8 * hsh(k + 2)) * HC;
-      const R = 2.2 + 3.4 * hsh(k + 3), Hh = 0.10 + 0.24 * hsh(k + 4), asp = 1.9 + 1.5 * hsh(k + 5);
-      const dx = x - mx, dz = z - mz;
+      const o = hummockCells.at(i, j);
+      if (o < 0) continue;
+      const t = hummockCells.t, R = t[o + 3], Hh = t[o + 4], asp = t[o + 5];
+      const dx = x - t[o + 1], dz = z - t[o + 2];
       const u = (dx * 0.906 + dz * 0.423) / (R * asp), v = (-dx * 0.423 + dz * 0.906) / R;
       const d2 = u * u + v * v;
-      if (d2 < 1) { const t = 1 - d2; h += Hh * t * Math.sqrt(t) * (1.1 + 0.4 * v * (u < 0 ? 1 : 0.4)); }   // steeper windward end, long lee tail
+      if (d2 < 1) { const q = 1 - d2; h += Hh * q * Math.sqrt(q) * (1.1 + 0.4 * v * (u < 0 ? 1 : 0.4)); }   // steeper windward end, long lee tail
     }
   return h;
 }
 
+// ── lane relief: route line, static prop pads, stamped trail, swells and clustered lumps ──────────────────────────
+/** the walked route's centre line (same formula as the terrain shader's routeX and dressing.js) */
+export const routeLineX = (z) => canyonX(z) * sstep(30, -10, z) + 1.5 * Math.sin(z * 0.083 + 0.4) * sstep(40, 150, z) + 0.7 * Math.sin(z * 0.21 + 0.68) * sstep(60, 160, z);
+
+// Spots where world.js seats rigid props from ONE ground sample (containers, ruin walls, gantry legs, stair feet, leaning slabs):
+// relief fades out around them so nothing floats or drowns. [x, z, halfX, halfZ, floor of the calm factor]
+const PADS = [];
+{
+  // snow banks (drift, reach) pile against the pad's real footprint (pad minus margin) through the shared footprint system
+  const box = (x, z, hx, hz, k = 0, drift = 0, reach = 4.5, inset = 0.4, ramp = 8) => {
+    PADS.push([x, z, hx, hz, k, ramp]);
+    if (drift > 0) addFootprint({ x, z, hx: hx - inset, hz: hz - inset, drift, reach });
+  };
+  const cont = (x, z, yaw) => { const q = Math.round(yaw / (Math.PI / 2)) & 1; box(x, z, q ? 1.45 : 3.25, q ? 3.25 : 1.45, 0, 0.42, 4, 0.2); };
+  [[10, 117, 0], [-12, 100, Math.PI / 2], [14, 94, 0], [-9, 58, 0], [11, 46, 0], [-64, 53, 0], [-114, 40, 0], [-116, 57, Math.PI / 2]].forEach(([x, z, y]) => cont(x, z, y));
+  [[10, -10, 0], [-14, -80, 1], [12, -128, 0], [-16, -160, 1]].forEach(([x, z, q]) => cont(canyonX(z) + x, z, q * Math.PI / 2));
+  // ruin walls carry their own 1.2 m skirt and snow-drift meshes: they tolerate relief, so only a thin calm zone
+  box(-14, 142, 9.5, 3.4, 0.45, 0.5, 5, 0.9); box(16, 146, 10.5, 3.4, 0.45, 0.5, 5, 0.9); box(-4, 36, 11.5, 3.4, 0.45, 0.5, 5, 0.9);
+  box(canyonX(-30) - 22, -30, 9.5, 3.4, 0.45, 0.5, 5, 0.9); box(canyonX(-48) + 20, -48, 9.5, 3.4, 0.45, 0.5, 5, 0.9);
+  box(-16, 80, 3.8, 5.8, 0, 0.5, 5, 1.0); box(16, 80, 3.8, 5.8, 0, 0.5, 5, 1.0);
+  box(-14, 130, 3.6, 9, 0.2); box(-66, 214, 3.8, 9, 0.2);
+  for (let px = -165; px <= 165.1; px += 22) for (const sz of [-1, 1]) box(px, 172 + sz * 5.1, 3.4, 3.4, 0.1);       // viaduct pier feet (placed from one ground sample each)
+  [[28, -92, 1], [-32, -142, 2], [-30, -66, 3], [34, -150, 4]].forEach(([x, z, sd]) => box(canyonX(z) + x, z, 8.5 + sd * 0.5, 6.5, 0, 0.6, 6, 2.5));
+  box(-90, 49, 40, 17, 0.35);                         // hall branch: yard, hall body and both exits
+  box(canyonX(-118), -118, 19.5, 6, 0.12, 0, 0, 0, 3.5); box(canyonX(-178), -178, 58, 12, 0.12, 0, 0, 0, 5);      // ring landmark and the factory gate (wings included)
+}
+const PAD_CELL = 32;
+const padGrid = new Map();
+for (const p of PADS) {
+  for (let j = Math.floor((p[1] - p[3] - 10) / PAD_CELL); j <= Math.floor((p[1] + p[3] + 10) / PAD_CELL); j++)
+    for (let i = Math.floor((p[0] - p[2] - 10) / PAD_CELL); i <= Math.floor((p[0] + p[2] + 10) / PAD_CELL); i++) {
+      const k = i * 4096 + j; const a = padGrid.get(k); if (a) a.push(p); else padGrid.set(k, [p]);
+    }
+}
+/** 1 = free ground, -> 0 next to a rigid prop */
+function padCalm(x, z) {
+  const list = padGrid.get(Math.floor(x / PAD_CELL) * 4096 + Math.floor(z / PAD_CELL));
+  if (!list) return 1;
+  let k = 1;
+  for (let i = 0; i < list.length; i++) {
+    const p = list[i];
+    const qx = Math.abs(x - p[0]) - p[2], qz = Math.abs(z - p[1]) - p[3];
+    if (qx > 10 || qz > 10) continue;
+    const d = Math.hypot(Math.max(qx, 0), Math.max(qz, 0)) + Math.min(Math.max(qx, qz), 0);
+    k = Math.min(k, p[4] + (1 - p[4]) * sstep(0.4, p[5], d));
+  }
+  return k;
+}
+
+// stamped / plowed trail: a shallow compacted floor between low rolled berms (the east berm, downwind, is the heavier one).
+// Its width and how well wind keeps it open depend on z through plain sines so the terrain shader can repaint the very same lines.
+const trailFill = (z) => 0.5 + 0.5 * sstep(-0.5, 0.55, Math.sin(z * 0.052 + 0.9) * 0.6 + Math.sin(z * 0.0191 + 2.3) * 0.55);
+const trailHalf = (z) => 1.25 + 0.3 * Math.sin(z * 0.037 + 2.0);
+function trailH(x, z) {
+  if (z > 268 || z < -184) return 0;
+  const d = x - routeLineX(z), a = Math.abs(d);
+  if (a > 6) return 0;
+  const w = trailHalf(z);
+  const floor = -0.2 * (1 - sstep(w - 0.85, w + 0.75, a));
+  const t = (a - (w + 0.85)) / 1.15;
+  const berm = t * t < 1 ? (1 - t * t) * (1 - t * t) * (d > 0 ? 0.30 : 0.2) : 0;
+  // the spawn mound's steep face (z 224..246) only gets a ghost of the trail: its own slope is already ~0.85
+  return (floor + berm) * trailFill(z) * sstep(268, 252, z) * sstep(-184, -170, z) * (1 - 0.8 * sstep(220, 228, z) * (1 - sstep(246, 254, z)));
+}
+
+// long, soft wind swells (stretched along the wind): the street / canyon floor stops being a dead-flat slab
+function swell(x, z) {
+  const u = x * WIND_X + z * WIND_Z, v = -x * WIND_Z + z * WIND_X;
+  return N.fbm2(u * 0.017 + 31.7, v * 0.047 + 8.1, 2) * 1.5 + N.n2(u * 0.043 + 3.3, v * 0.1 + 7.7) * 0.5;
+}
+
+const SPIRE_DISCS = [[-46, 206, 27], [40, 198, 26], [-24, 188, 19], [27, 226, 19]];
+
+// talus fans: loose scree cones spilling from the gully mouths at the canyon wall feet (side = 0 | 1, s = plan distance past the wall foot).
+// Jittered cells along the wall; each fan is a round-shouldered cone, a touch longer down the wall than out into the floor.
+const TLC = 27;
+const talusCells = [0, 1].map((side) => makeCells(32, 6, (i, j, t, o) => {
+  const k = i * 4421 + j * 977 + side * 811 + 91;
+  if (hsh(k) > 0.82) return false;
+  t[o + 1] = (i + 0.1 + 0.8 * hsh(k + 1)) * TLC;                      // z of the fan axis
+  t[o + 2] = 0.5 + 3.5 * hsh(k + 2);                                   // s of the apex
+  t[o + 3] = 9 + 8 * hsh(k + 3);                                       // radius along the wall
+  t[o + 4] = 0.9 + 1.5 * hsh(k + 4);                                   // height (slopes stay under the terrain shader's rock threshold)
+  t[o + 5] = 0.75 + 0.45 * hsh(k + 5);                                 // reach into the floor / up the wall (x radius)
+  return true;
+}));
+function talus(s, z, side) {
+  if (s < -16 || s > 24) return 0;
+  const C = talusCells[side], ci = Math.floor(z / TLC);
+  let h = 0;
+  for (let i = ci - 1; i <= ci + 1; i++) {
+    const o = C.at(i, 0);
+    if (o < 0) continue;
+    const t = C.t, R = t[o + 3];
+    const dz = (z - t[o + 1]) / R, ds = (s - t[o + 2]) / (R * t[o + 5]);
+    const q = 1 - dz * dz - ds * ds;
+    if (q > 0) h += t[o + 4] * q * Math.sqrt(q);
+  }
+  return h;
+}
+
+// compacted lane vs deep-snow flanks: the snow either side of the walked lane stands higher (and breaks into gaps / heavier banks),
+// so the lane reads as a worn valley through soft deep snow; side and strength change along z, never a continuous kerb
+function flankLift(x, z, dl, lx) {
+  const sd = x < lx ? 3.1 : 9.7;
+  const n1 = 0.5 + 0.5 * N.n2(z * 0.024 + 17.3, sd);
+  const amp = 0.28 + 0.72 * sstep(0.22, 0.78, n1);
+  return amp * sstep(2.3, 5.8, dl) * (1 - 0.55 * sstep(12, 32, dl));
+}
+
+// transverse wind ridges on the long descent into the canyon: sinuous round-crowned crests with a steeper lee, bent and gated by
+// slow noise so they come in loose groups of two or three and never as even contour lines
+function ridges(x, z) {
+  const warp = N.n2(x * 0.021 + 5.1, z * 0.02) * 9 + N.n2(x * 0.055, z * 0.055 + 2.0) * 2.4;
+  const lam = 15 + 6 * N.n2(x * 0.011 + 1.7, z * 0.01 + 9.3);
+  const ph = (z + warp) / lam, f = ph - Math.floor(ph);
+  const prof = f < 0.64 ? sstep(0, 0.64, f) : 1 - sstep(0.64, 1.0, f);
+  const gate = sstep(-0.02, 0.38, N.n2(x * 0.018 + 3.3, z * 0.013 + 8.8)) * (0.55 + 0.45 * sstep(-0.1, 0.5, N.n2(x * 0.045 + 12.0, z * 0.045)));
+  return prof * gate * (0.35 + 0.35 * (0.5 + 0.5 * N.n2(Math.floor(ph) * 3.7 + 0.5, 7.7)) * 2);
+}
+
+// snow-draped rubble: blunt boxy heaps (flat or slightly tilted tops, short firm shoulders) that read as collapsed blocks buried in the
+// snow. A focal block is accompanied by two smaller satellites along its long axis; heaps gather in loose fields and square up with
+// the street grid in the city. Blocks whose centre sits on the walked lane stay low enough to step over.
+const RBC = 17;
+const rubbleCells = makeCells(40, 24, (i, j, t, o) => {
+  const k = i * 70001 + j * 150001 + 23;
+  const gate = N.n2((i + 0.5) * RBC * 0.0105 + 61.0, (j + 0.5) * RBC * 0.0105 + 7.5);
+  if (hsh(k) > 0.14 + 1.0 * sstep(-0.12, 0.34, gate)) return false;
+  const mx = (i + 0.12 + 0.76 * hsh(k + 1)) * RBC, mz = (j + 0.12 + 0.76 * hsh(k + 2)) * RBC;
+  const grid = mz > 28 && mz < 152;
+  const yaw = grid ? (hsh(k + 3) - 0.5) * 0.7 + (hsh(k + 4) < 0.5 ? 0 : Math.PI / 2) : hsh(k + 3) * 3.14;
+  const hx0 = 1.5 + 2.0 * hsh(k + 5), hz0 = hx0 * (0.55 + 0.4 * hsh(k + 6)), H0 = 0.4 + 0.75 * hsh(k + 7);
+  const lowK = Math.abs(mx - routeLineX(mz)) < 3.4 + hx0 ? 0.55 : 1;                // on the lane: step-over only
+  t[o + 1] = mx; t[o + 2] = mz; t[o + 3] = Math.cos(yaw); t[o + 4] = Math.sin(yaw);
+  t[o + 5] = (hsh(k + 8) - 0.5) * 0.3; t[o + 6] = (hsh(k + 9) - 0.5) * 0.3;          // top plane tilt
+  for (let q = 0; q < 3; q++) {
+    const sc = q === 0 ? 1 : q === 1 ? 0.62 : 0.42, e = o + 7 + q * 5;
+    t[e] = q === 0 ? 0 : (q === 1 ? 1 : -1) * hx0 * (1.15 + 0.5 * hsh(k + 11 + q));    // offset along the long axis
+    t[e + 1] = (hsh(k + 14 + q) - 0.5) * hz0 * 1.2;
+    t[e + 2] = hx0 * sc; t[e + 3] = hz0 * sc * (0.85 + 0.3 * hsh(k + 17 + q));
+    t[e + 4] = H0 * (q === 0 ? 1 : q === 1 ? 0.66 : 0.45) * lowK;
+  }
+  return true;
+});
+function rubble(x, z) {
+  const ci = Math.floor(x / RBC), cj = Math.floor(z / RBC);
+  let h = 0;
+  for (let j = cj - 1; j <= cj + 1; j++)
+    for (let i = ci - 1; i <= ci + 1; i++) {
+      const o = rubbleCells.at(i, j);
+      if (o < 0) continue;
+      const t = rubbleCells.t;
+      const dx = x - t[o + 1], dz = z - t[o + 2], ca = t[o + 3], sa = t[o + 4], tx = t[o + 5], tz = t[o + 6];
+      const px = dx * ca + dz * sa, pz = -dx * sa + dz * ca;
+      let best = 0;
+      for (let q = 0; q < 3; q++) {
+        const e = o + 7 + q * 5;
+        const lx = px - t[e], lz = pz - t[e + 1];
+        const u = Math.abs(lx) / t[e + 2], v = Math.abs(lz) / t[e + 3];
+        if (u > 1.5 || v > 1.5) continue;
+        const d = Math.pow(u * u * Math.sqrt(u) + v * v * Math.sqrt(v), 0.4);        // superellipse p = 2.5: blunt but round-shouldered, no straight creases
+        if (d >= 1.25) continue;
+        const f = 1 - sstep(0.25, 1.25, d);
+        const top = t[e + 4] * (1 + tx * lx + tz * lz) * (0.62 + 0.38 * f) * f;
+        if (top > best) best = top;
+      }
+      h += best;
+    }
+  return h;
+}
+
+// clustered snow lumps: a focal lump (long gentle windward back, short steep lee) trailed downwind by smaller satellites of
+// decreasing size; they gather in loose fields (never an even scatter), so low relief comes in groups with calm snow between them
+function makeLumpField(LMC, seed, pBase, pGain, sizeK) {
+  const cells = makeCells(Math.ceil(520 / LMC), 20, (i, j, t, o) => {
+    const k = i * 20011 + j * 130003 + seed;
+    const gate = N.n2((i + 0.5) * LMC * 0.012 + 4.0 + seed * 0.37, (j + 0.5) * LMC * 0.012 + 1.5);       // loose fields
+    if (hsh(k) > pBase + pGain * sstep(-0.2, 0.3, gate)) return false;
+    const mx = (i + 0.15 + 0.7 * hsh(k + 1)) * LMC, mz = (j + 0.15 + 0.7 * hsh(k + 2)) * LMC;
+    const ang = (hsh(k + 6) - 0.5) * 0.9, ca = Math.cos(ang), sa = Math.sin(ang);
+    const wx = WIND_X * ca - WIND_Z * sa, wz = WIND_Z * ca + WIND_X * sa;
+    t[o + 1] = wx; t[o + 2] = wz;
+    for (let q = 0; q < 3; q++) {
+      const sc = q === 0 ? 1 : q === 1 ? 0.55 : 0.34, e = o + 3 + q * 5;
+      const R = (2.3 + 2.6 * hsh(k + 3)) * sc * sizeK, Hh = (0.34 + 0.5 * hsh(k + 4)) * (q === 0 ? 1 : q === 1 ? 0.62 : 0.4) * Math.sqrt(sizeK), asp = 1.5 + 1.0 * hsh(k + 5);
+      const off = (q === 0 ? 0 : (q === 1 ? 1 : 1.9) * (4 + 3 * hsh(k + 7 + q))) * sizeK, side = (hsh(k + 9 + q) - 0.5) * 6 * sizeK;
+      t[e] = mx + wx * off - wz * side; t[e + 1] = mz + wz * off + wx * side;
+      t[e + 2] = R; t[e + 3] = Hh; t[e + 4] = asp;
+    }
+    return true;
+  });
+  return (x, z) => {
+    const ci = Math.floor(x / LMC), cj = Math.floor(z / LMC);
+    let h = 0;
+    for (let j = cj - 1; j <= cj + 1; j++)
+      for (let i = ci - 1; i <= ci + 1; i++) {
+        const o = cells.at(i, j);
+        if (o < 0) continue;
+        const t = cells.t, wx = t[o + 1], wz = t[o + 2];
+        for (let q = 0; q < 3; q++) {
+          const e = o + 3 + q * 5, R = t[e + 2];
+          const dx = x - t[e], dz = z - t[e + 1];
+          const u0 = dx * wx + dz * wz, v = (-dx * wz + dz * wx) / R;
+          if (v > 1 || v < -1) continue;
+          const u = u0 / (R * t[e + 4] * (u0 < 0 ? 1.35 : 0.72));
+          const d2 = u * u + v * v;
+          if (d2 < 1) { const q2 = 1 - d2; h += t[e + 3] * q2 * q2 * (1.0 + 0.6 * q2); }
+        }
+      }
+    return h;
+  };
+}
+const lumps = makeLumpField(14, 11, 0.34, 1.1, 1);
+const lumpsCanyon = makeLumpField(19, 5107, 0.5, 1.0, 0.85);        // second, finer field that only the canyon floor uses
 
 // crescent snow drifts (barchan-like): long gentle windward back, rounded crest, steeper lee slip face, horns trailing downwind.
 // The lit back / blue lee split gives the toon terminator a bold, connected crescent shadow shape (as in the concept art).
 const DRIFT_LAYERS = [[21, 0.70, 7, 9, 0.34, 0.62], [46, 0.55, 16, 14, 0.50, 0.85]];   // cell, probability, length min/range, height min/range
+const driftCells = DRIFT_LAYERS.map(([DC, prob, Lm, Lr, Hm, Hr], li) => makeCells(Math.ceil(1700 / DC), 8, (i, j, t, o) => {
+  const k = i * 31337 + j * 90017 + 29 + li * 7717;
+  if (hsh(k) > prob) return false;
+  const L = Lm + Lr * hsh(k + 3);                      // crest -> horn tip, along the wind
+  const ang = (hsh(k + 6) - 0.5) * 0.8, ca = Math.cos(ang), sa = Math.sin(ang);
+  t[o + 1] = (i + 0.12 + 0.76 * hsh(k + 1)) * DC; t[o + 2] = (j + 0.12 + 0.76 * hsh(k + 2)) * DC;
+  t[o + 3] = L; t[o + 4] = L * (0.62 + 0.4 * hsh(k + 4)); t[o + 5] = Hm + Hr * hsh(k + 5);
+  t[o + 6] = 0.906 * ca - 0.423 * sa; t[o + 7] = 0.423 * ca + 0.906 * sa;
+  return true;
+}));
 function drifts(x, z) {
   let h = 0;
   for (let li = 0; li < DRIFT_LAYERS.length; li++) {
-    const [DC, prob, Lm, Lr, Hm, Hr] = DRIFT_LAYERS[li];
+    const DC = DRIFT_LAYERS[li][0], C = driftCells[li];
     const ci = Math.floor(x / DC), cj = Math.floor(z / DC);
     for (let j = cj - 1; j <= cj + 1; j++)
       for (let i = ci - 1; i <= ci + 1; i++) {
-        const k = i * 31337 + j * 90017 + 29 + li * 7717;
-        if (hsh(k) > prob) continue;
-        const mx = (i + 0.12 + 0.76 * hsh(k + 1)) * DC, mz = (j + 0.12 + 0.76 * hsh(k + 2)) * DC;
-        const L = Lm + Lr * hsh(k + 3);                      // crest -> horn tip, along the wind
-        const W = L * (0.62 + 0.4 * hsh(k + 4));             // half width across the wind
-        const H = Hm + Hr * hsh(k + 5);
-        const ang = (hsh(k + 6) - 0.5) * 0.8;
-        const ca = Math.cos(ang), sa = Math.sin(ang);
-        const wx = 0.906 * ca - 0.423 * sa, wz = 0.423 * ca + 0.906 * sa;
-        const dx = x - mx, dz = z - mz;
+        const o = C.at(i, j);
+        if (o < 0) continue;
+        const t = C.t, L = t[o + 3], W = t[o + 4], H = t[o + 5], wx = t[o + 6], wz = t[o + 7];
+        const dx = x - t[o + 1], dz = z - t[o + 2];
         const u = dx * wx + dz * wz, v = -dx * wz + dz * wx;
+        if (u < -0.62 * L || u > 0.84 * L) continue;
         const vn = v / W;
         if (vn <= -1 || vn >= 1) continue;
-        const env = Math.pow(1 - vn * vn, 1.25);
+        const b0 = 1 - vn * vn, env = b0 * Math.sqrt(Math.sqrt(b0));
         const d = u - L * 0.5 * vn * vn;                     // signed distance downwind of the (convex-upwind) crest line
-        const t = d < 0 ? -d / (L * 0.62) : d / (L * 0.34 * (0.6 + 0.4 * env));
-        if (t >= 1) continue;
-        const g = (1 - t * t) * (1 - t * t);
+        const q = d < 0 ? -d / (L * 0.62) : d / (L * 0.34 * (0.6 + 0.4 * env));
+        if (q >= 1) continue;
+        const g = (1 - q * q) * (1 - q * q);
         h += H * env * g;
       }
   }
@@ -357,8 +628,9 @@ export function heightAt(x, z, aux) {
   const entrance = sstep(140, 175, z);
   // the approach corridor (spawn → viaduct gateway) keeps a readable, gently falling line of sight
   const corr = sstep(62, 18, Math.abs(x - 2)) * sstep(135, 178, z) * sstep(292, 268, z);
-  let h = duneMacro(x, z) * (1 - 0.72 * corr) * (0.32 + 0.68 * entrance) * (1 - 0.88 * flat) * gateFlat(x, z)
-        + duneDetail(x, z) * (1 - 0.25 * corr) * (0.62 + 0.38 * entrance) * (1 - 0.6 * flat) * gateFlat(x, z);
+  const gf = gateFlat(x, z);
+  let h = duneMacro(x, z) * (1 - 0.72 * corr) * (0.32 + 0.68 * entrance) * (1 - 0.88 * flat) * gf
+        + duneDetail(x, z) * (1 - 0.25 * corr) * (0.62 + 0.38 * entrance) * (1 - 0.6 * flat) * gf;
   h += 4.2 * Math.exp(-(((x - 2) / 38) ** 2 + ((z - 262) / 26) ** 2)) - 3.2 * corr * sstep(236, 205, z);
   // subtle wind-swell on the city plateau
   h += N.n2(x * 0.02, z * 0.03) * 0.5 * flat;
@@ -374,12 +646,46 @@ export function heightAt(x, z, aux) {
     if (z > 150 && z < 195) mw *= sstep(9, 14, Math.abs(z - 172));       // keep the viaduct gateway clear
     if (mw > 0) h += mounds(x, z) * mw;
     // hummocks everywhere outside the buildings' flat plateau and the gate pads; softer on the walking line
-    let hw = (1 - 0.8 * flat) * gateFlat(x, z) * (z < 262 ? 1 : 0.4);
+    let hw = (1 - 0.35 * flat) * gf * (z < 262 ? 1 : 0.4) * padCalm(x, z);
     if (hw > 0) h += hummocks(x, z) * hw * (0.55 + 0.45 * sstep(2, 9, Math.abs(x - (z > 30 ? 0 : cx))));
     // crescent drifts: bold lit-back / blue-lee snow forms, calmer on the plateau street and on the walking line, never climbing walls
-    let dw = (1 - 0.3 * flat) * gateFlat(x, z) * (z < 45 ? 1.6 : 1) * (z < 268 ? 1 : 0.35) * (0.62 + 0.38 * sstep(1.5, 8, Math.abs(x - (z > 30 ? 0 : cx))));
+    let dw = (1 - 0.3 * flat) * gf * (z < 45 ? 1.6 : 1) * (z < 268 ? 1 : 0.35) * (0.62 + 0.38 * sstep(1.5, 8, Math.abs(x - (z > 30 ? 0 : cx))));
     if (z < 45) { const chw = canyonHalfWidth(z); dw *= 1 - cm0 * (1 - sstep(chw - 4, chw - 22, Math.abs(x - cx))); }
     if (dw > 0.01) h += drifts(x, z) * dw;
+  }
+  if (z < 276 && z > -204 && x < 262 && x > -262) {
+    // lane relief: stamped trail, soft wind swells, clustered lumps and buried rubble on the walkable ground (street plateau, canyon floor,
+    // entrance field); the compacted lane stays calmer than its flanks and props that were seated from a single ground sample stay clear
+    // the relief lives in a corridor around the walked line (street / canyon floor / field): the rest of the world keeps its old shape
+    const lx0 = routeLineX(z), dl0 = Math.abs(x - lx0);
+    let wG = flat * sstep(42, 30, dl0);
+    if (z < 45) { const chw = canyonHalfWidth(z), dc = Math.abs(x - cx); wG = Math.max(wG, (1 - sstep(chw - 10, chw + 2, dc)) * sstep(34, 26, dc)); }
+    else if (z > 138) wG = Math.max(wG, sstep(140, 156, z) * (1 - sstep(266, 274, z)) * sstep(46, 34, Math.abs(x - 2)));
+    // needle clusters (world.js spire()) search for the flattest ground around these spots; their layout depends on the terrain they probe,
+    // so the old ground is kept bit-for-bit inside the probed discs
+    for (let q = 0; q < SPIRE_DISCS.length; q++) { const sd = SPIRE_DISCS[q]; wG *= sstep(sd[2], sd[2] + 5, Math.hypot(x - sd[0], z - sd[1])); }
+    wG *= 0.8 + 0.2 * gf;                         // the two landmark pads keep calmer (not dead flat) ground
+    if (wG > 0.01) {
+      const calm = padCalm(x, z);
+      const lx = lx0, dl = dl0;
+      const kF = z > 150 ? 0.6 : z < 45 ? 1.0 : 1;                       // field / canyon carry less of the street's dressing
+      const kLane = 0.38 + 0.62 * sstep(1.8, 6.5, dl);
+      const wl = wG * kF * kLane * calm;
+      h += lumps(x, z) * wl;
+      if (z < 45) h += lumpsCanyon(x, z) * wl * 0.85;
+      h += rubble(x, z) * wG * (z > 150 ? 0.45 : z < 45 ? 0.75 : 0.9) * (z > 150 && z < 200 ? sstep(9, 14, Math.abs(z - 172)) : 1) * calm;
+      if (z < 262) h += swell(x, z) * wG * (flat > 0.5 ? 0.85 : z < 45 ? 0.55 : 0) * calm;
+      // the descent from the city plateau into the canyon: ridges break the long plain ramp (the lane's centre stays gentler)
+      if (z < 56) h += ridges(x, z) * (z > -14 ? 1.15 * sstep(56, 40, z) : 0.85) * (0.3 + 0.7 * sstep(1.0, 5.0, dl)) * wG * calm;
+      if (flat > 0.01 && z > 45) h += flankLift(x, z, dl, lx) * 1.3 * flat * gf * sstep(268, 250, z) * (z > 150 ? 0.7 : 1) * calm;
+      h += trailH(x, z) * calm * Math.min(1, wG * 2.5);
+    }
+  }
+  // the hump where the city street meets the canyon ramp (z 24..42) hid the whole canyon from the street's end: ease it toward a low shoulder
+  {
+    const hz = sstep(46, 38, z) * sstep(8, 20, z), hx = sstep(26, 12, Math.abs(x - routeLineX(z)));
+    const k = hz * hx;
+    if (k > 0) h = lerp(h, Math.min(h, 1.5 + 0.35 * N.n2(x * 0.08 + 3, z * 0.08)), 0.85 * k);
   }
   const cm = sstep(32, -2, z);
   h += canyonFloor(z);
@@ -389,6 +695,7 @@ export function heightAt(x, z, aux) {
     const bulge = 5 * sstep(0.1, 0.7, N.n2(z * 0.032 + 5, 0.5 + (side ? 2.3 : -2.3))) + 2.5 * N.n2(z * 0.09, side ? 7.1 : -7.1);
     const dx = Math.abs(x - cx) + warp - bulge;
     const s = dx - canyonHalfWidth(z);
+    if (s > -16 && z > -196) h += cm * talus(s, z, side) * gateFlat(x, z);
     if (s > -8) {
       const sp = spec('c' + side, 40 + side, 6, 66, PLATEAU_H - 8);
       const fc = cliff(s, z, x, z, sp, 0);
@@ -531,7 +838,7 @@ function buildGrid(x0, z0, size, segs, R, skirt, withTex = false) {
       for (let d = -Rm; d <= Rm; d++) a += RT[(j + d) * pn + i];
       RB[j * pn + i] = a / (2 * Rm + 1);
     }
-  const curvK = clamp(Math.round(2.4 / step), 1, 5);
+  const curvK = clamp(Math.round(2.4 / step), 1, 5), curvS = clamp(Math.round(1.3 / step), 1, 5), curvM = clamp(Math.round(3.6 / step), 1, 5);
 
   const verts = n * n + 4 * n;
   const pos = new Float32Array(verts * 3), nor = new Float32Array(verts * 3), col = new Float32Array(verts * 3), tr = new Float32Array(verts * 4);
@@ -563,6 +870,7 @@ function buildGrid(x0, z0, size, segs, R, skirt, withTex = false) {
       const kk = curvK;
       const lap = (H[c0 + kk] + H[c0 - kk] + H[c0 + kk * pn] + H[c0 - kk * pn] - 4 * h) / (kk * step * kk * step);
       tr[k * 4] = RB[c0]; tr[k * 4 + 1] = 1 - 0.3 * ao; tr[k * 4 + 2] = clamp(lap * 0.3, -1, 1); tr[k * 4 + 3] = LCs[c0];
+
     }
   }
   // skirts hide cracks between neighbouring LOD levels
@@ -599,13 +907,17 @@ function buildGrid(x0, z0, size, segs, R, skirt, withTex = false) {
   if (withTex) {
     // height-gradient texture (RG half float) on the node grid: the shader samples it with cubic B-spline filtering, so snow
     // normals are C2-smooth per pixel and cel terminators draw flowing curves instead of triangle-edge polylines
-    const td = new Uint16Array(n * n * 2);
+    // B / A carry small- and medium-scale curvature (lumps, berms, swells -> pale crests, blue hollows), filtered with the same cubic kernel
+    const td = new Uint16Array(n * n * 4);
+    const lapK = (c0, kk, h) => (H[c0 + kk] + H[c0 - kk] + H[c0 + kk * pn] + H[c0 - kk * pn] - 4 * h) / (kk * step * kk * step);
     for (let j = 0; j < n; j++)
       for (let i = 0; i < n; i++) {
-        const c0 = (j + P) * pn + i + P, o = (j * n + i) * 2;
+        const c0 = (j + P) * pn + i + P, o = (j * n + i) * 4, h = H[c0];
         td[o] = THREE.DataUtils.toHalfFloat(GX[c0]); td[o + 1] = THREE.DataUtils.toHalfFloat(GZ[c0]);
+        td[o + 2] = THREE.DataUtils.toHalfFloat(clamp(lapK(c0, curvS, h) * 2.0, -1, 1));
+        td[o + 3] = THREE.DataUtils.toHalfFloat(clamp(lapK(c0, curvK, h) * 0.3 + lapK(c0, curvM, h) * 2.8, -1.5, 1.5));
       }
-    const tex = new THREE.DataTexture(td, n, n, THREE.RGFormat, THREE.HalfFloatType);
+    const tex = new THREE.DataTexture(td, n, n, THREE.RGBAFormat, THREE.HalfFloatType);
     tex.minFilter = tex.magFilter = THREE.LinearFilter;
     tex.wrapS = tex.wrapT = THREE.ClampToEdgeWrapping;
     tex.generateMipmaps = false;

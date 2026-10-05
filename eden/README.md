@@ -21,7 +21,8 @@ URL 参数:`?q=low` 低画质(2K 阴影、1x 像素比);`?noao` 关闭环境光�
 需要 `pip install bpy==4.2.0`,无头运行,确定性输出到 `assets/`。资产缺失时游戏自动回退到代码生成版本。
 - `gen_buildings.py [id]` → `buildings.glb`(约 6MB,15 栋、3 级 LOD)。由 `tools/buildings.json` 驱动(同时生成 `assets/buildings.json` 与 `src/fallback_specs.js`),该规格也决定游戏里的摆放、碰撞与屋顶积雪。嵌板/竖缝窗是网格里真实的凹陷,倒角圆边,烘焙 AO。
 - `gen_props.py` → `props.glb`(约 4MB):8 种针塔、8 种倒塌巨板(灰/橙)、集装箱、格构支柱。
-- `gen_rocks.py` → `rocks.glb`(约 5MB):15 种雕刻岩石(圆润卵石、碎块、板岩、岩层堆叠),烘焙 AO。由 `src/scatter.js` 成簇摆放。
+- `gen_rocks.py` → `rocks.glb`(约 2.5MB):37 种雕刻岩石(11 种大型主体 + 23 种小岩石:圆石、碎块、倾斜楔形、板岩、多块堆叠)加 12 种碎石,烘焙 AO 与边缘提亮,独立的积雪帽网格,4 级 LOD。由 `src/scatter.js` 成簇摆放(主体+卫星+碎石扇+雪堤)。运行:`PYTHONDONTWRITEBYTECODE=1 python3 tools/gen_rocks.py`(环境变量 `ROCKS_OUT`、`ROCKS_ONLY`)。
+- `gen_debris.py` → `debris.glb`(约 3.2MB):25 类残骸/废墟道具(断墙、拱段、倒塌柱鼓、桁架、管道、罐体、齿轮/叶轮、履带残骸、板条箱、路障、碎石扇等,约 56 变体,3 级 LOD),由 `src/dressing.js` 成组摆放。调试参数:`?nodress`、`?fallbackdress`。
 - `gen_structures.py` → `structures.glb`(约 5.4MB):拱形高架桥模块、圆环(160 段旋转体)、工厂大门、龙门架、天桥桁架、楼梯、废墟墙、机库。
 - 生成脚本里的已知坑:`extrude_face_region` 默认保留原面;圆锥半径方向在旋转后颠倒;烘焙 AO 前必须先细分。
 - 上线建议:开启 gzip/brotli(`python http.server` 不压缩,四个 GLB 合计约 21MB,压缩后约 9MB)。

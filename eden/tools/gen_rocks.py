@@ -1,147 +1,526 @@
-"""Blender (bpy) asset generator: stylised sculpted rocks with baked vertex AO, 3 LODs each, plus snow caps.
-Run:  python3 gen_rocks.py   (needs `pip install bpy==4.2.0`)  ->  ../assets/rocks.glb
+"""Blender (bpy) asset generator: hand-sculpted stylised rocks (anime / cel-shaded look) with baked vertex AO + edge lightening,
+3 LODs each, conforming snow caps, plus a small library of pebbles.
+Run:  PYTHONDONTWRITEBYTECODE=1 python3 gen_rocks.py   (needs `pip install bpy==4.2.0`, numpy)  ->  ../assets/rocks.glb
+      (ROCKS_OUT=/path/x.glb redirects the output, ROCKS_ONLY=3,7 builds only some variants for quick looks)
 
-Variant index ranges (mirrored in src/scatter.js):
-    0-4   rounded boulders  (smooth pebble forms with a few soft planar flats)
-    5-8   angular chunks    (plane-cut polyhedra: crisp faces, small rounded bevels, ledge grooves)
-    9-11  slabs             (wide flat boulders, boxy plan, flat tops)
-    12-14 strata stacks     (tiered buttes: stepped ledges, gullies, blocky plan, rounded dome cap)
-Objects:  rock{i}_lod{0..2}  (unit scale, y up in game, base buried near y=-0.4)
-          rock{i}_snow_lod{0,1} (thick rounded snow cap that sits on the up-facing part of the rock)
+How a rock is made (all vectorised with numpy, deterministic):
+  * a rock is a union of 1-3 convex "lumps"; every lump is a superellipsoid cut by 4-8 big planes with soft edges
+    (soft-max of signed distances -> chiselled planar faces with softly rounded crisp edges), then shaved by a few chip planes,
+    a groove/crack, strata ledges and a little noise.  The surface is solved radially (bisection) on an icosphere.
+  * the dense (ico 6, ~20k tris) rock is baked: self-occlusion AO + convex-edge lightening + patchy value variation,
+    then decimated (Blender collapse) to the LOD budget; AO and normals are projected from the dense mesh onto the low
+    poly vertices (high -> low bake), so 150-600 triangles still shade like a smooth sculpt with crisp cel terminators.
+  * snow caps are separate meshes built on the rock surface: a mask (up-facing, thicker on flat tops, longer drips on the lee
+    side, azimuth "tongues") thresholded per pixel in the game, thickness profile with pillow bumps, own smooth normals.
+Variants (names `rk{i}_{kind}_{H|S}_lod{0..3}`, snow `rk{i}_{kind}_{H|S}_snow{0..3}`; H = dense hero variant for 2 m+ rocks,
+S = cheap small-rock variant):  kinds boulder / chunk / shard / slab / stack (and strata = tiered butte, hero only).
+Pebbles `pb{j}`: ~40-triangle stones; COLOR_0 = (shade, snow-top weight, 0): the game mixes rock/snow colour.
+Triangle budgets per LOD (body / snow cap): hero 3000/~900, 1050/~250, 380/~70, 120/~20; small 520/~250, 210/~70, 84/~25, 36/~8.
+Unit conventions: horizontal half-extent = 1, y = 0 is the nominal waterline (roughly the lowest third is buried).
 Blender y is exported as UP (export_yup=False).
-The GLB is rewritten with int8 normals / ubyte colours (KHR_mesh_quantization); src/scatter.js reads them through the
-normalised BufferAttribute accessors, so nothing needs expanding.
+The GLB is rewritten with int8 normals / ubyte colours (KHR_mesh_quantization).
 """
-import bpy, bmesh, math, random, os
-from mathutils import Vector, noise, bvhtree
+import bpy, bmesh, math, random, os, sys
+import numpy as np
+from mathutils import Vector, bvhtree
+from mathutils.interpolate import poly_3d_calc
 
-OUT = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'assets', 'rocks.glb')
+OUT = os.environ.get('ROCKS_OUT') or os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'assets', 'rocks.glb')
+ONLY = set(int(x) for x in os.environ['ROCKS_ONLY'].split(',')) if os.environ.get('ROCKS_ONLY') else None
+TAU = math.tau
 
-KINDS = ['boulder'] * 5 + ['chunk'] * 4 + ['slab'] * 3 + ['strata'] * 3
-VARIANTS = len(KINDS)
-# icosphere subdivision per LOD (bmesh: 6 -> 10242 verts, 5 -> 2562, 4 -> 642 ...)
-ICO = {'boulder': [6, 5, 4], 'chunk': [6, 5, 4], 'slab': [6, 5, 4]}          # hero variants (3-12 m rocks seen from 3 m away)
-ICO_SMALL = {'boulder': [5, 4, 3], 'chunk': [5, 4, 3], 'slab': [5, 4, 3]}   # variants only used for small rocks / rubble
-HERO = {0, 1, 5, 6, 9}                                                         # indices that get the dense meshes (mirrored in scatter.js)
-STRATA_RES = [(72, 84), (44, 52), (28, 32)]    # (angular, vertical) samples per LOD
+# (kind, hero) per variant index
+VARIANTS = (
+    [('boulder', True)] * 3 + [('chunk', True)] * 4 + [('slab', True)] * 2 + [('stack', True)] * 2 + [('strata', True)] * 3 +
+    [('boulder', False)] * 5 + [('chunk', False)] * 6 + [('shard', False)] * 5 + [('slab', False)] * 3 + [('stack', False)] * 4
+)
+N_PEB = 12
+TRIS = {True: [3000, 1050, 380, 120], False: [520, 210, 84, 36]}        # decimation targets per LOD
+CAPSUB = {True: [5, 4, 3, 2], False: [4, 3, 2, 1]}                          # icosphere subdivision of the snow-cap base mesh
+HI_SUB = 6
+SHRINK = [0.014, 0.026, 0.040, 0.07]                                  # body pulled inside the true surface per LOD (cap lip sits above it)
+LIP = [0.042, 0.056, 0.075, 0.11]                                          # snow cap lift at its contour per LOD
 
 
+# ── numpy helpers ─────────────────────────────────────────────────────────────────────────────
 def sstep(a, b, x):
+    t = np.clip((np.asarray(x, dtype=np.float64) - a) / (b - a), 0.0, 1.0)
+    return t * t * (3 - 2 * t)
+
+
+def smax(terms, k):
+    T = np.stack(terms, 0)
+    m = T.max(0)
+    return m + np.log(np.exp(k * (T - m)).sum(0)) / k
+
+
+class Noise:
+    """smooth vectorised noise: sum of random plane waves (std ~1)"""
+    def __init__(self, seed, n=28):
+        r = np.random.RandomState(seed)
+        d = r.normal(size=(n, 3))
+        d /= np.linalg.norm(d, axis=1, keepdims=True)
+        self.d = (d * r.uniform(0.7, 1.4, size=(n, 1))).T
+        self.ph = r.uniform(0, TAU, n)
+        self.n = n
+
+    def __call__(self, P, f=1.0):
+        return np.sin(TAU * f * (P @ self.d) + self.ph).sum(1) / math.sqrt(self.n / 2)
+
+    def fbm(self, P, f=1.0, oct=2):
+        return sum(self(P, f * 2.03 ** o) * 0.5 ** o for o in range(oct)) / (1.0 + 0.5 * (oct > 1) + 0.25 * (oct > 2))
+
+
+_ico = {}
+
+
+def ico(sub):
+    if sub not in _ico:
+        bm = bmesh.new()
+        bmesh.ops.create_icosphere(bm, subdivisions=sub, radius=1.0)
+        bm.verts.ensure_lookup_table()
+        V = np.array([v.co[:] for v in bm.verts], dtype=np.float64)
+        F = np.array([[v.index for v in f.verts] for f in bm.faces], dtype=np.int64)
+        bm.free()
+        _ico[sub] = (V, F)
+    return _ico[sub]
+
+
+def rot_matrix(rnd):
+    # random rotation (so the triangulation poles never line up with the rock features)
+    q = np.array([rnd.gauss(0, 1) for _ in range(4)])
+    q /= np.linalg.norm(q)
+    w, x, y, z = q
+    return np.array([[1 - 2 * (y * y + z * z), 2 * (x * y - z * w), 2 * (x * z + y * w)],
+                     [2 * (x * y + z * w), 1 - 2 * (x * x + z * z), 2 * (y * z - x * w)],
+                     [2 * (x * z - y * w), 2 * (y * z + x * w), 1 - 2 * (x * x + y * y)]])
+
+
+def dirv(az, el):
+    return np.array([math.cos(el) * math.cos(az), math.sin(el), math.cos(el) * math.sin(az)])
+
+
+def rot_axis(axis, ang):
+    a = np.asarray(axis, dtype=np.float64)
+    a = a / np.linalg.norm(a)
+    c, s = math.cos(ang), math.sin(ang)
+    x, y, z = a
+    return np.array([[c + x * x * (1 - c), x * y * (1 - c) - z * s, x * z * (1 - c) + y * s],
+                     [y * x * (1 - c) + z * s, c + y * y * (1 - c), y * z * (1 - c) - x * s],
+                     [z * x * (1 - c) - y * s, z * y * (1 - c) + x * s, c + z * z * (1 - c)]])
+
+
+def face_normals(V, F):
+    return np.cross(V[F[:, 1]] - V[F[:, 0]], V[F[:, 2]] - V[F[:, 0]])
+
+
+def vert_normals(V, F):
+    fn = face_normals(V, F)
+    vn = np.zeros_like(V)
+    for k in range(3):
+        np.add.at(vn, F[:, k], fn)
+    return vn / (np.linalg.norm(vn, axis=1, keepdims=True) + 1e-12)
+
+
+def adjacency(F):
+    e = np.concatenate([F[:, [0, 1]], F[:, [1, 2]], F[:, [2, 0]]], 0)
+    e = np.concatenate([e, e[:, ::-1]], 0)
+    return e[:, 0], e[:, 1]
+
+
+def nbr_mean(x, adj, n):
+    ai, bi = adj
+    acc = np.zeros_like(x)
+    cnt = np.zeros(n)
+    np.add.at(acc, ai, x[bi])
+    np.add.at(cnt, ai, 1.0)
+    cnt = np.maximum(cnt, 1.0)
+    return acc / (cnt[:, None] if x.ndim == 2 else cnt)
+
+
+def jacobi(x, adj, n, iters):
+    for _ in range(iters):
+        x = 0.5 * x + 0.5 * nbr_mean(x, adj, n)
+    return x
+
+
+# ── the rock field ────────────────────────────────────────────────────────────────────────────
+def lump_terms(P, L):
+    q = P - L['c']
+    qr = q @ L['R'] if L.get('R') is not None else q
+    a = np.abs(qr) / np.array(L['r'])
+    e = L['e']
+    s_e = ((a ** e).sum(1)) ** (1.0 / e) - 1.0
+    s_e = s_e * min(L['r'])
+    terms = [s_e] + [q @ n - d for n, d in L['planes']]
+    return smax(terms, L['k'])
+
+
+def solve_radial(spec, U, extra):
+    """per-lump radial extent along each direction of U (origin must be inside every lump), combined with a soft maximum"""
+    ts = []
+    for L in spec['lumps']:
+        def S(P, L=L):
+            terms = [lump_terms(P, L)] + [P @ n - d for n, d in extra]
+            return smax(terms, spec['kx'])
+        lo = np.zeros(len(U))
+        hi = np.full(len(U), 3.2)
+        for _ in range(26):
+            mid = (lo + hi) * 0.5
+            inside = S(U * mid[:, None]) < 0
+            lo = np.where(inside, mid, lo)
+            hi = np.where(inside, hi, mid)
+        ts.append(lo)
+    if len(ts) == 1:
+        return ts[0]
+    return smax(ts, spec['kr'])
+
+
+def rock_shape(spec, U, noise, norm=None, detail=True):
+    """positions of the rock surface along directions U (n,3)"""
+    extra = [(np.array([0.0, -1.0, 0.0]), spec['bottom'])]
+    t = solve_radial(spec, U, extra)
+    if 'chips' not in spec:
+        # chip planes shave the corners of the pass-1 shape (support distance minus a few %)
+        P0 = U * t[:, None]
+        rnd = random.Random(spec['seed'] + 7)
+        chips = []
+        for _ in range(spec['nchip']):
+            for _try in range(6):
+                if rnd.random() < 0.55:
+                    n = dirv(rnd.uniform(0, TAU), math.radians(rnd.uniform(25, 62)))    # shoulder facet
+                else:
+                    n = dirv(rnd.uniform(0, TAU), math.radians(rnd.uniform(-20, 25)))   # side facet
+                h = (P0 @ n).max()
+                if h > 0.25:
+                    break
+            chips.append((n, h * (1 - rnd.uniform(*spec['chipdelta']))))
+        spec['chips'] = chips
+        extra = extra + chips
+        t = solve_radial(spec, U, extra)
+    else:
+        extra = extra + spec['chips']
+        t = solve_radial(spec, U, extra)
+    P = U * t[:, None]
+    if not detail:      # the smooth base (planes + chips only): the snow cap is built on it so ledges / cracks never notch the snow outline
+        return (P - norm[0]) * norm[1], norm
+    # detail: broad facet wobble + fine noise + strata ledges + crack grooves (all along the radial direction)
+    dr = noise.fbm(P, spec['nf'], 2) * spec['namp']
+    if spec['strata']:
+        amp, fr, soft = spec['strata']
+        ph = P[:, 1] * fr + noise(P, 0.35) * 0.6
+        saw = (ph % 1.0)
+        dr = dr + amp * (sstep(0.0, 0.2 + soft, saw) - 0.5) * (1 - 0.7 * sstep(0.55, 0.95, np.abs(P[:, 1] / max(t.max(), 1e-3))))
+    for (n, d0, w, depth) in spec['cracks']:
+        dist = P @ n - d0
+        dr = dr - depth * np.exp(-(dist / w) ** 2)
+    t2 = np.maximum(t + dr, 0.05)
+    P = U * t2[:, None]
+    if norm is None:
+        mn, mx = P.min(0), P.max(0)
+        h = max(mx[0] - mn[0], mx[2] - mn[2]) / 2
+        y0 = mn[1] + spec['wl'] * (mx[1] - mn[1])
+        norm = (np.array([(mn[0] + mx[0]) / 2, y0, (mn[2] + mx[2]) / 2]), 1.0 / h)
+    return (P - norm[0]) * norm[1], norm
+
+
+# ── spec builders (one per rock family) ───────────────────────────────────────────────────────
+def planes_ring(rnd, n, d_lo, d_hi, el_lo, el_hi, jitter=0.28, a0=None):
+    a0 = rnd.uniform(0, TAU) if a0 is None else a0
+    out = []
+    for i in range(n):
+        az = a0 + (i + rnd.uniform(-jitter, jitter)) / n * TAU
+        out.append((dirv(az, rnd.uniform(el_lo, el_hi)), rnd.uniform(d_lo, d_hi)))
+    return out
+
+
+def spec_common(seed, **kw):
+    s = dict(seed=seed, kx=22.0, kr=14.0, bottom=0.45, nchip=3, chipdelta=(0.04, 0.10), nf=2.4, namp=0.012, strata=None,
+             cracks=[], wl=0.34, lee=None)
+    s.update(kw)
+    return s
+
+
+def spec_chunk(rnd, seed, hero):
+    ns = rnd.choice([6, 7, 7, 8]) if hero else rnd.choice([4, 5, 5, 6])
+    planes = planes_ring(rnd, ns, 0.56, 0.98, -0.06, 0.48, jitter=0.34)
+    planes.append((dirv(rnd.uniform(0, TAU), math.radians(rnd.uniform(62, 82))), rnd.uniform(0.72, 0.95)))     # tilted top
+    for _ in range(rnd.choice([1, 2, 2])):
+        planes.append((dirv(rnd.uniform(0, TAU), math.radians(rnd.uniform(30, 55))), rnd.uniform(0.74, 1.0)))   # shoulders
+    L = dict(c=np.zeros(3), r=(1.4, rnd.uniform(1.2, 1.5), rnd.uniform(1.0, 1.35)), e=2.4, planes=planes, k=rnd.uniform(30, 40) if hero else rnd.uniform(20, 30))
+    cr = []
+    if rnd.random() < 0.5:
+        cr.append((dirv(rnd.uniform(0, TAU), math.radians(rnd.uniform(-10, 40))), rnd.uniform(0.15, 0.4), 0.03, rnd.uniform(0.03, 0.06)))
+    if hero:
+        return spec_common(seed, lumps=[L], nchip=rnd.choice([5, 6, 7]), chipdelta=(0.05, 0.17), cracks=cr, namp=0.011, nf=1.1, bottom=0.48, kx=34.0,
+                           strata=(0.030, rnd.uniform(1.6, 2.3), 0.22) if rnd.random() < 0.6 else None)
+    return spec_common(seed, lumps=[L], nchip=rnd.choice([3, 4, 5]), cracks=cr, namp=0.006, nf=1.4, bottom=0.48, kx=26.0)
+
+
+def spec_boulder(rnd, seed, hero):
+    planes = planes_ring(rnd, rnd.choice([5, 6, 6]) if hero else rnd.choice([4, 4, 5]), 0.78, 0.97, 0.0, 0.38, 0.35)
+    planes.append((dirv(rnd.uniform(0, TAU), math.radians(rnd.uniform(64, 82))), rnd.uniform(0.70, 0.90)))
+    planes.append((dirv(rnd.uniform(0, TAU), math.radians(rnd.uniform(36, 55))), rnd.uniform(0.84, 1.0)))
+    L = dict(c=np.zeros(3), r=(1.2, rnd.uniform(1.05, 1.35), rnd.uniform(0.95, 1.2)), e=2.1, planes=planes, k=(rnd.uniform(14, 20) if hero else rnd.uniform(10, 15)))
+    return spec_common(seed, lumps=[L], nchip=(4 if hero else 2), chipdelta=((0.05, 0.14) if hero else (0.03, 0.08)), kx=16.0, namp=(0.010 if hero else 0.006), nf=1.2, bottom=0.46)
+
+
+def spec_shard(rnd, seed, hero):
+    ang = math.radians(rnd.uniform(10, 24))
+    az = rnd.uniform(0, TAU)
+    R = rot_axis([math.cos(az), 0, math.sin(az)], ang)
+    sides = [(np.array([1.0, 0, 0]), rnd.uniform(0.44, 0.58)), (np.array([-1.0, 0, 0]), rnd.uniform(0.44, 0.58)),
+             (np.array([0, 0, 1.0]), rnd.uniform(0.62, 0.86)), (np.array([0, 0, -1.0]), rnd.uniform(0.62, 0.86))]
+    # slanted wedge cut on top: normal pitched over one side
+    wa = rnd.choice([0, math.pi, math.pi / 2, -math.pi / 2]) + rnd.uniform(-0.3, 0.3)
+    sides.append((dirv(wa, math.radians(rnd.uniform(34, 52))), rnd.uniform(0.78, 0.96)))
+    sides.append((dirv(wa + rnd.uniform(1.8, 2.8), math.radians(rnd.uniform(55, 75))), rnd.uniform(0.96, 1.12)))
+    planes = [(R @ n, d) for n, d in sides]
+    L = dict(c=np.zeros(3), r=(0.9, 1.6, 1.1), e=2.7, planes=planes, k=rnd.uniform(20, 28), R=R)
+    return spec_common(seed, lumps=[L], nchip=rnd.choice([3, 4]), bottom=0.62, wl=0.30, namp=0.005, nf=1.6, kx=26.0)
+
+
+def spec_slab(rnd, seed, hero):
+    planes = planes_ring(rnd, rnd.choice([4, 5, 6]), 0.66, 0.92, -0.04, 0.22, 0.3)
+    planes.append((dirv(rnd.uniform(0, TAU), math.radians(rnd.uniform(76, 86))), rnd.uniform(0.27, 0.34)))
+    L = dict(c=np.zeros(3), r=(1.4, rnd.uniform(0.40, 0.5), rnd.uniform(0.9, 1.15)), e=3.0, planes=planes, k=rnd.uniform(18, 26))
+    return spec_common(seed, lumps=[L], nchip=rnd.choice([3, 4]), bottom=0.22, namp=0.004, nf=1.4, wl=0.38, kx=24.0)
+
+
+def spec_stack(rnd, seed, hero):
+    lumps = []
+
+    def mk(c, sc, tall):
+        pl = planes_ring(rnd, rnd.choice([4, 5]), 0.58 * sc, 0.92 * sc, -0.04, 0.42, 0.32)
+        pl.append((dirv(rnd.uniform(0, TAU), math.radians(rnd.uniform(62, 82))), rnd.uniform(0.70, 0.92) * sc * tall))
+        L = dict(c=np.array(c, dtype=np.float64), r=(1.4 * sc, 1.35 * sc * tall, 1.2 * sc), e=2.4, planes=pl, k=rnd.uniform(18, 26))
+        for _ in range(8):     # every lump must contain the origin (the union is solved radially from there)
+            if lump_terms(np.zeros((1, 3)), L)[0] < -0.04:
+                break
+            L['c'] = L['c'] * 0.8
+        return L
+
+    lumps.append(mk([0, 0, 0], 1.0, rnd.uniform(0.9, 1.1)))
+    a = rnd.uniform(0, TAU)
+    for i in range(rnd.choice([1, 2, 2])):
+        sc = rnd.uniform(0.58, 0.74) if i == 0 else rnd.uniform(0.40, 0.54)
+        ang = a + i * rnd.uniform(2.0, 3.4)
+        lumps.append(mk([math.cos(ang) * 0.62, rnd.uniform(-0.12, 0.22), math.sin(ang) * 0.62], sc, rnd.uniform(0.9, 1.4)))
+    return spec_common(seed, lumps=lumps, kr=rnd.uniform(16, 24), nchip=(rnd.choice([4, 5]) if hero else rnd.choice([2, 3])), chipdelta=((0.05, 0.15) if hero else (0.04, 0.10)), bottom=0.48, namp=(0.010 if hero else 0.006), nf=1.2, kx=26.0)
+
+
+def spec_pebble(rnd, seed):
+    planes = planes_ring(rnd, rnd.choice([5, 6, 7]), 0.80, 0.96, -0.10, 0.40, 0.35)
+    planes.append((dirv(rnd.uniform(0, TAU), math.radians(rnd.uniform(62, 80))), rnd.uniform(0.74, 0.92)))
+    L = dict(c=np.zeros(3), r=(1.0, rnd.uniform(0.85, 1.1), rnd.uniform(0.8, 1.0)), e=2.0, planes=planes, k=rnd.uniform(9, 13))
+    return spec_common(seed, lumps=[L], nchip=2, chipdelta=(0.04, 0.10), kx=14.0, bottom=0.55, namp=0.02, nf=2.4, wl=0.34)
+
+
+SPEC = {'chunk': spec_chunk, 'boulder': spec_boulder, 'shard': spec_shard, 'slab': spec_slab, 'stack': spec_stack}
+
+
+# ── bake: AO + edge lightening + patchy variation ─────────────────────────────────────────────
+def bake_ao(V, F, N, rays=18, maxd=0.9, seed=7):
+    tree = bvhtree.BVHTree.FromPolygons([tuple(v) for v in V.tolist()], [tuple(f) for f in F.tolist()])
+    rnd = np.random.RandomState(seed)
+    r1, r2 = rnd.uniform(size=rays), rnd.uniform(size=rays)
+    rr = np.sqrt(r1)
+    samp = np.stack([rr * np.cos(TAU * r2), rr * np.sin(TAU * r2), np.sqrt(1 - r1)], 1)      # cosine hemisphere (local t,b,n)
+    ao = np.zeros(len(V))
+    for i in range(len(V)):
+        n = N[i]
+        t = np.cross(n, [0, 1, 0] if abs(n[1]) < 0.9 else [1, 0, 0])
+        t /= np.linalg.norm(t)
+        b = np.cross(n, t)
+        D = samp[:, 0:1] * t + samp[:, 1:2] * b + samp[:, 2:3] * n
+        o = Vector(V[i] + n * 0.003)
+        hit = 0
+        for d in D:
+            if tree.ray_cast(o, Vector(d), maxd)[0] is not None:
+                hit += 1
+        ao[i] = 1 - hit / rays
+    return ao
+
+
+def bake_shade(V, F, N, noise, spec, banded):
+    """vertex shade in 0..1: soft self-occlusion + lightened convex edges + patchy value + optional strata band"""
+    n = len(V)
+    adj = adjacency(F)
+    ao = bake_ao(V, F, N)
+    ao = jacobi(ao, adj, n, 1)
+    lap = nbr_mean(V, adj, n) - V
+    curv = (lap * N).sum(1)                      # < 0 convex, > 0 concave
+    edge_len = np.linalg.norm(lap, axis=1).mean() + 1e-6
+    cv = jacobi(curv / edge_len, adj, n, 2)
+    convex = sstep(0.0, 0.55, -cv)
+    concave = sstep(0.0, 0.7, cv)
+    sh = (0.82 + 0.18 * ao) * (0.88 + 0.12 * convex) * (1.0 - 0.14 * concave)
+    sh *= 0.58 + 0.42 * sstep(-0.62, 0.20, V[:, 1])                      # buried underside darker / cooler
+    sh *= 0.94 + 0.06 * noise(V, 1.1) + 0.03 * noise(V, 3.1)
+    # per-plane hand-painted value: normals are binned by direction and each bin gets its own small value offset, so neighbouring facets
+    # of the same cel band still read as separately painted planes
+    az = np.arctan2(N[:, 2], N[:, 0])
+    el = np.arcsin(np.clip(N[:, 1], -1, 1))
+    key = np.floor(az / (math.pi / 3.5) + 0.37).astype(np.int64) * 7 + np.floor(el / (math.pi / 5.0) + 0.21).astype(np.int64) * 13
+    hv = ((key * 2654435761) % 1000) / 1000.0
+    sh *= 0.93 + 0.12 * hv                                     # patchy hand-painted value
+    if banded:
+        band = np.sin((V[:, 1] * 3.3 + noise(V, 0.5) * 0.5) * TAU * 0.5)
+        sh *= 1.0 - 0.10 * sstep(0.55, 0.95, band) * (1 - np.abs(N[:, 1]))
+    return np.clip(sh, 0, 1)
+
+
+# ── mesh helpers ──────────────────────────────────────────────────────────────────────────────
+def make_mesh(name, V, F, normals=None, cols=None, extra_attr=None):
+    me = bpy.data.meshes.new(name)
+    me.from_pydata(V.tolist(), [], F.tolist())
+    me.update()
+    for p in me.polygons:
+        p.use_smooth = True
+    if cols is not None:
+        attr = me.color_attributes.new('Col', 'FLOAT_COLOR', 'POINT')
+        flat = np.zeros((len(V), 4), dtype=np.float32)
+        flat[:, :3] = cols if cols.ndim == 2 else cols[:, None]
+        flat[:, 3] = 1.0
+        attr.data.foreach_set('color', flat.reshape(-1))
+    if normals is not None:
+        me.normals_split_custom_set_from_vertices([tuple(x) for x in normals.tolist()])
+    return me
+
+
+def decimate(V, F, target_tris):
+    me = make_mesh('tmp_hi', V, F)
+    ob = bpy.data.objects.new('tmp_hi', me)
+    bpy.context.scene.collection.objects.link(ob)
+    md = ob.modifiers.new('d', 'DECIMATE')
+    md.decimate_type = 'COLLAPSE'
+    md.ratio = min(1.0, max(0.002, target_tris / len(F)))
+    dg = bpy.context.evaluated_depsgraph_get()
+    me2 = bpy.data.meshes.new_from_object(ob.evaluated_get(dg))
+    V2 = np.array([v.co[:] for v in me2.vertices], dtype=np.float64)
+    F2 = np.array([list(p.vertices) for p in me2.polygons], dtype=np.int64)
+    bpy.data.objects.remove(ob)
+    bpy.data.meshes.remove(me)
+    bpy.data.meshes.remove(me2)
+    return V2, F2
+
+
+def project(Vlo, Vhi, Fhi, attrs):
+    """high -> low bake: interpolate per-vertex attributes (dict name -> (n,k) arrays on the hi mesh) at the closest hi surface points"""
+    tree = bvhtree.BVHTree.FromPolygons([tuple(v) for v in Vhi.tolist()], [tuple(f) for f in Fhi.tolist()])
+    out = {k: np.zeros((len(Vlo),) + a.shape[1:]) for k, a in attrs.items()}
+    for i, p in enumerate(Vlo):
+        loc, nor, fi, dist = tree.find_nearest(Vector(p))
+        f = Fhi[fi]
+        w = poly_3d_calc([Vector(Vhi[f[0]]), Vector(Vhi[f[1]]), Vector(Vhi[f[2]])], loc)
+        for k, a in attrs.items():
+            out[k][i] = w[0] * a[f[0]] + w[1] * a[f[1]] + w[2] * a[f[2]]
+    return out
+
+
+def build_body(V, F, N, shade, tris, shrink=0.0):
+    if tris >= len(F):
+        return V, F, N, shade
+    V2, F2 = decimate(V, F, tris)
+    pr = project(V2, V, F, {'n': N, 's': shade[:, None]})
+    N2 = pr['n'] / (np.linalg.norm(pr['n'], axis=1, keepdims=True) + 1e-9)
+    # the collapsed mesh may bulge past the true surface: pull it just inside so the snow cap (built on the true surface) always sits above it
+    return V2 - N2 * shrink, F2, N2, pr['s'][:, 0]
+
+
+# ── snow cap ──────────────────────────────────────────────────────────────────────────────────
+def snow_cap(spec, noise, norm, U, F, thick, lee_az, seed, iters, lip):
+    """thick rounded blanket on the up-facing part, built on the same smooth rock surface (no chips/cracks)"""
+    n = len(U)
+    adj = adjacency(F)
+    P, _ = rock_shape(spec, U, noise, norm, detail=False)
+    nrm0 = vert_normals(P, F)
+    h = np.linalg.norm(P[F[:, 0]] - P[F[:, 1]], axis=1).mean()                     # mean edge length of this cap base mesh
+    its = lambda sigma: max(1, int(round((sigma / h) ** 2 / 0.3)))                   # Jacobi passes for a blur of radius sigma (rock units)
+    nrm = jacobi(nrm0, adj, n, its(0.07))
+    nrm /= np.linalg.norm(nrm, axis=1, keepdims=True) + 1e-9
+    nbl = jacobi(nrm0, adj, n, its(0.22))                  # heavily blurred normal: the snow outline ignores individual rock facets
+    nbl /= np.linalg.norm(nbl, axis=1, keepdims=True) + 1e-9
+    rnd = np.random.RandomState(seed)
+    ny = nbl[:, 1]
+    az = np.arctan2(nbl[:, 2], nbl[:, 0])
+    horiz = np.sqrt(np.clip(1 - ny * ny, 0, 1))
+    lee = np.maximum(np.cos(az - lee_az), 0) * horiz                       # lee side: snow hangs lower, drips
+    nz = Noise(seed + 5)
+    tongue = (np.sin(az * 2 + rnd.uniform(0, TAU)) * 0.5 + np.sin(az * 3 + rnd.uniform(0, TAU)) * 0.5)
+    th = 0.77 - 0.32 * lee + 0.07 * tongue
+    m = sstep(th - 0.14, th + 0.14, ny + 0.07 * nz(P, 1.1)) * sstep(-0.30, 0.10, P[:, 1])
+    m = np.maximum(m, 0.97 * sstep(0.84, 0.95, ny))             # flat tops are always fully covered (no pinholes)
+    m = jacobi(m, adj, n, its(0.15))                        # wide transition band (>= 3 triangles): the per-pixel contour stays smooth at any rock size
+    m = sstep(0.08, 0.92, m)
+    keep = m[F].max(1) >= 0.06
+    # thickness: full on flat tops, soft pillows, thin lip toward the contour; below the contour the shell dives into the rock (alpha-cut anyway)
+    flat = sstep(0.45, 0.97, ny)
+    pil = np.zeros(n)
+    for _ in range(2):
+        c = rnd.normal(size=3)
+        c /= np.linalg.norm(c)
+        c[1] = abs(c[1]) * 0.8 + 0.4
+        c /= np.linalg.norm(c)
+        pil += np.exp(-np.sum((nbl - c) ** 2, 1) / 0.6) * rnd.uniform(0.10, 0.30)
+    prof = sstep(0.48, 0.98, m)
+    t = lip * sstep(0.30, 0.52, m) - 0.05 * (1 - sstep(0.15, 0.48, m)) + thick * prof * (0.55 + 0.45 * flat) * (1.0 + 0.12 * nz(P, 0.9) + pil)
+    Pc = P + nrm * t[:, None]
+    Fk = F[keep]
+    used = np.unique(Fk)
+    remap = -np.ones(n, dtype=np.int64)
+    remap[used] = np.arange(len(used))
+    Pk, mk, nk0 = Pc[used], m[used], nrm[used]
+    Fk = remap[Fk]
+    # normals of the cap itself (pillow shading), blended toward the rock's smooth normal at the lip
+    ncap = vert_normals(Pk, Fk)
+    adj2 = adjacency(Fk)
+    ncap = jacobi(ncap, adj2, len(Pk), its(0.10))
+    w = sstep(0.5, 0.85, mk)[:, None]
+    nn = w * ncap + (1 - w) * nk0
+    nn /= np.linalg.norm(nn, axis=1, keepdims=True) + 1e-9
+    return Pk, Fk, nn, mk
+
+
+# ── strata stacks (tiered buttes) ─────────────────────────────────────────────────────────────
+STRATA_RES = [(52, 62), (34, 40), (22, 26)]
+
+
+def sstep1(a, b, x):
     t = max(0.0, min(1.0, (x - a) / (b - a)))
     return t * t * (3 - 2 * t)
 
 
-def soft_min(vals, k):
-    m = min(vals)
-    return m - math.log(sum(math.exp(-k * (v - m)) for v in vals)) / k
-
-
-def finish(bm, name):
-    bm.normal_update()
-    me = bpy.data.meshes.new(name)
-    bm.to_mesh(me)
-    bm.free()
-    for poly in me.polygons:
-        poly.use_smooth = True
-    return me
-
-
-# ── radial (star-shaped) rocks: boulders, chunks, slabs ──────────────────────────────────────
-def build_radial(kind, seed, detail):
-    rnd = random.Random(seed)
-    off = Vector((rnd.random() * 50, rnd.random() * 50, rnd.random() * 50))
-    planes = []
-    if kind == 'boulder':
-        # chunky block-rounded lump: a dominant top plane, 4-6 big side planes with different depths, generous bevels
-        rad = (1.0, 0.62 + rnd.random() * 0.12, 0.84 + rnd.random() * 0.16)
-        expo, k, topd, chip, crack, ledge = 2.5, 6.5 + rnd.random() * 2.5, 0.58 + rnd.random() * 0.08, 0.010, 0.0, 0.0
-        n_pl = 4 + rnd.randint(0, 2)
-        for i in range(n_pl):
-            a = (i + rnd.random() * 0.8) / n_pl * math.tau
-            y = (rnd.random() - 0.15) * 0.55
-            planes.append((Vector((math.cos(a), y, math.sin(a))).normalized(), 0.66 + rnd.random() * 0.22))
-    elif kind == 'chunk':
-        rad = (1.0, 0.7 + rnd.random() * 0.2, 0.8 + rnd.random() * 0.2)
-        expo, k, topd, chip, crack, ledge = 2.1, 7.0 + rnd.random() * 3.0, 0.62 + rnd.random() * 0.12, 0.006, 0.0, 0.016
-        for _ in range(7 + rnd.randint(0, 2)):
-            a = rnd.random() * math.tau; y = (rnd.random() - 0.35) * 1.2
-            planes.append((Vector((math.cos(a), y, math.sin(a))).normalized(), 0.58 + rnd.random() * 0.30))
-    else:  # slab
-        rad = (1.0, 0.34 + rnd.random() * 0.1, 0.62 + rnd.random() * 0.22)
-        expo, k, topd, chip, crack, ledge = 3.2, 8.0 + rnd.random() * 3.0, 0.30 + rnd.random() * 0.06, 0.006, 0.0, 0.016
-        for _ in range(5 + rnd.randint(0, 2)):
-            a = rnd.random() * math.tau; y = (rnd.random() - 0.4) * 0.5
-            planes.append((Vector((math.cos(a), y, math.sin(a))).normalized(), 0.7 + rnd.random() * 0.22))
-    # tilted flat top + flat buried base
-    ta = rnd.random() * math.tau
-    tilt = 0.10 + rnd.random() * 0.12
-    planes.append((Vector((math.cos(ta) * tilt, 1, math.sin(ta) * tilt)).normalized(), topd))
-    planes.append((Vector((0, -1, 0)), 0.40 if kind != 'slab' else 0.2))
-
-    bm = bmesh.new()
-    bmesh.ops.create_icosphere(bm, subdivisions=detail, radius=1.0)
-    smooth = []          # detail-free positions (same vertex order): the snow cap derives its mask and shading normals from these
-    for v in bm.verts:
-        u = v.co.normalized()
-        # superellipsoid extent along u
-        s = (abs(u.x / rad[0]) ** expo + abs(u.y / rad[1]) ** expo + abs(u.z / rad[2]) ** expo) ** (-1.0 / expo)
-        base = s * (1 + 0.10 * noise.fractal(u * 1.8 + off, 0.5, 2.0, 2))
-        ts = [base]
-        for n, d in planes:
-            dn = n.dot(u)
-            if dn > 0.02:
-                ts.append(d / dn)
-        t = soft_min(ts, k)
-        p = u * t
-        smooth.append(p.copy())
-        r = t
-        # chips (medium facets), fine ridged cracks, and subtle horizontal ledge grooves (strata)
-        r += noise.fractal(p * 2.4 + off, 0.5, 2.0, 3) * chip
-        if crack:
-            r -= (1 - abs(noise.noise(p * 7.0 + off))) ** 7 * crack * 1.4
-        if ledge:
-            r += ledge * (sstep(0.0, 0.18, (p.y * 3.1 + noise.noise(p * 0.8 + off) * 0.5) % 1.0) - 0.5) * (1 if abs(u.y) < 0.8 else 0.3)
-        v.co = u * r
-    me = finish(bm, f'rk{seed}_{detail}')
-    me['smooth'] = [c for p in smooth for c in p]
-    return me
-
-
-# ── strata stacks: tiered buttes, solid of revolution with stepped ledges ─────────────────
 def build_strata(seed, res):
+    from mathutils import noise as bnoise
     nth, nrow = res
     rnd = random.Random(seed)
     off = Vector((rnd.random() * 40, rnd.random() * 40, rnd.random() * 40))
     tiers = 3 + rnd.randint(0, 2)
     ytop = 0.78 + rnd.random() * 0.22
     ybot = -0.45
-    # tier boundaries (heights), irregular
     ws = [0.6 + rnd.random() for _ in range(tiers)]
     tot = sum(ws)
     ys, acc = [], ybot
     for w in ws:
         acc += (ytop - ybot) * w / tot
-        ys.append(acc)                               # top of each tier
+        ys.append(acc)
     rm, expo, phi, batter, gully = [], [], [], [], []
     r0 = 0.88 + rnd.random() * 0.12
     for i in range(tiers):
         rm.append(r0)
-        r0 *= 0.66 + rnd.random() * 0.26             # each tier steps in (sometimes barely)
+        r0 *= 0.66 + rnd.random() * 0.26
         expo.append(2.6 + rnd.random() * 1.8)
         phi.append(rnd.random() * math.pi)
-        batter.append((rnd.random() - 0.5) * 0.16)  # +: leans in, -: overhangs
-        gully.append((rnd.random() * math.tau, 0.12 + rnd.random() * 0.1, 0.08 + rnd.random() * 0.1))
+        batter.append((rnd.random() - 0.5) * 0.16)
+        gully.append((rnd.random() * TAU, 0.12 + rnd.random() * 0.1, 0.08 + rnd.random() * 0.1))
     ledge_w = 0.045
 
     def radius_at(y, th):
-        # tier index by smooth blend across risers
-        R = 0.0
-        prev = rm[0]
         R = rm[0]
         for i in range(tiers - 1):
-            t = sstep(ys[i] - ledge_w, ys[i] + ledge_w * 0.6, y)
+            t = sstep1(ys[i] - ledge_w, ys[i] + ledge_w * 0.6, y)
             R = R + (rm[i + 1] - R) * t
-        # which tier dominates plan shape / batter
         ti = 0
         for i in range(tiers):
             if y > ys[i] - ledge_w * 0.5 and i < tiers - 1:
@@ -155,33 +534,27 @@ def build_strata(seed, res):
         e = 2.0 / expo[ti]
         px = math.copysign(abs(c) ** e, c)
         pz = math.copysign(abs(s) ** e, s)
-        pl = math.hypot(px, pz)                      # plan-shape extent factor (>=1 for squarish)
-        # blocky radial offsets: planar segments with rounded kinks, gullies
-        blk = noise.fractal(Vector((math.cos(th) * 1.6, math.sin(th) * 1.6, ti * 3.1)) + off, 0.5, 2.0, 2) * 0.10
+        blk = bnoise.fractal(Vector((math.cos(th) * 1.6, math.sin(th) * 1.6, ti * 3.1)) + off, 0.5, 2.0, 2) * 0.10
         gth, gw, gd = gully[ti]
-        dth = (th - gth + math.pi) % math.tau - math.pi
-        g = gd * math.exp(-(dth / gw) ** 2) * sstep(lo, lo + (hi - lo) * 0.5, y)
+        dth = (th - gth + math.pi) % TAU - math.pi
+        g = gd * math.exp(-(dth / gw) ** 2) * sstep1(lo, lo + (hi - lo) * 0.5, y)
         return max(0.05, R * (1 + blk - g)), px, pz
 
     bm = bmesh.new()
     rows = []
-    # rows from base to top; the top few rows form a rounded flat dome
     for j in range(nrow + 1):
         t = j / nrow
-        y = ybot + (ytop - ybot) * t * 1.0
+        y = ybot + (ytop - ybot) * t
         ring = []
         for i in range(nth):
-            th = (i / nth) * math.tau
+            th = (i / nth) * TAU
             R, px, pz = radius_at(y, th)
-            # dome: over the last 8% pull radius in with an elliptical profile
             dome = 1.0
             if t > 0.92:
                 q = (t - 0.92) / 0.08
                 dome = math.sqrt(max(0.0, 1 - q * q))
-                y2 = y - (ytop - ybot) * 0.0
             ring.append(bm.verts.new(Vector((R * px * dome, y, R * pz * dome))))
         rows.append(ring)
-    # bottom cap (buried)
     bc = bm.verts.new(Vector((0, ybot, 0)))
     tc = bm.verts.new(Vector((0, ytop, 0)))
     for j in range(nrow):
@@ -200,124 +573,51 @@ def build_strata(seed, res):
             pass
     bmesh.ops.recalc_face_normals(bm, faces=bm.faces)
     bmesh.ops.triangulate(bm, faces=bm.faces)
-    # merge duplicate verts at the poles
     bmesh.ops.remove_doubles(bm, verts=bm.verts, dist=1e-5)
-    return finish(bm, f'rs{seed}_{nth}')
-
-
-# ── baked vertex AO ─────────────────────────────────────────────────────────────────────────
-def bake_ao(me, rays=24, maxd=0.9):
-    bm = bmesh.new(); bm.from_mesh(me)
     bm.normal_update()
-    tree = bvhtree.BVHTree.FromBMesh(bm)
-    rnd = random.Random(7)
-    attr = me.color_attributes.new('Col', 'FLOAT_COLOR', 'POINT')
-    for i, v in enumerate(bm.verts):
-        n = v.normal.normalized()
-        t = n.cross(Vector((0, 1, 0)) if abs(n.y) < 0.9 else Vector((1, 0, 0))).normalized(); b = n.cross(t)
-        hit = 0
-        for _ in range(rays):
-            r1, r2 = rnd.random(), rnd.random()
-            rr = math.sqrt(r1); th = math.tau * r2
-            d = (t * (rr * math.cos(th)) + b * (rr * math.sin(th)) + n * math.sqrt(1 - r1)).normalized()
-            if tree.ray_cast(v.co + n * 0.002, d, maxd)[0] is not None:
-                hit += 1
-        ao = 1 - hit / rays
-        # buried underside is darker; soft sky gradient so the base reads cooler/darker
-        ao *= 0.50 + 0.50 * sstep(-0.42, 0.30, v.co.y)
-        attr.data[i].color = (ao, ao, ao, 1)
+    V = np.array([v.co[:] for v in bm.verts], dtype=np.float64)
+    bm.verts.ensure_lookup_table()
+    F = np.array([[v.index for v in f.verts] for f in bm.faces], dtype=np.int64)
     bm.free()
+    return V, F
 
 
-# ── snow cap: thick rounded blanket on the up-facing part of a rock ───────────────────────
-def snow_cap(src_me, seed, thick):
-    """Duplicate faces whose verts are up-facing, push them out along the normal with a rounded falloff.
-    The mask AND the shading normals come from the detail-free base shape (chips / ledge grooves / gullies removed), so the
-    contour the game thresholds (COLOR_0.r > 0.5) is one smooth flowing line and the cap shades like a clean snow pillow."""
-    rnd = random.Random(seed)
-    off = Vector((rnd.random() * 30, rnd.random() * 30, rnd.random() * 30))
-    bm = bmesh.new(); bm.from_mesh(src_me)
-    bm.normal_update()
-    # the source mesh carries the baked-AO colour layer 'Col': drop it, otherwise the mask layer below would collide with it
-    # (the exported COLOR_0 would be the noisy per-vertex AO and the snow border would turn into a sawtooth)
-    for layer in list(bm.verts.layers.float_color):
-        bm.verts.layers.float_color.remove(layer)
-    sm_pos = src_me.get('smooth')
-    bms = bmesh.new(); bms.from_mesh(src_me)
-    if sm_pos is not None:
-        for v in bms.verts:
-            v.co = Vector((sm_pos[v.index * 3], sm_pos[v.index * 3 + 1], sm_pos[v.index * 3 + 2]))
-    bms.normal_update()
-    nrm = {v.index: v.normal.copy() for v in bms.verts}
-    # a few Jacobi passes on the base normals: removes the last vertex-level noise
-    for _ in range(3):
-        nn = {}
-        for v in bms.verts:
-            acc = nrm[v.index].copy()
-            for e in v.link_edges:
-                acc += nrm[e.other_vert(v).index]
-            nn[v.index] = acc.normalized()
-        nrm = nn
-    spos = {v.index: v.co.copy() for v in bms.verts}
-    bms.free()
-    lm = bm.verts.layers.float.new('m')
-    ln = bm.verts.layers.float_vector.new('n')
-    lsn = bm.verts.layers.float_vector.new('sn')
-    for v in bm.verts:
-        n = nrm[v.index]
-        nz = noise.fractal(spos[v.index] * 1.5 + off, 0.5, 2.0, 2) * 0.10
-        # snow settles on up-facing faces and gentle upper flanks, never on the buried underside
-        v[lm] = sstep(0.40, 0.86, n.y + nz) * sstep(-0.30, 0.05, spos[v.index].y)
-        v[ln] = v.normal
-        v[lsn] = n
-    # diffuse the mask over the mesh (Jacobi smoothing, ~2 edge lengths) so the contour is one flowing line
-    for _ in range(7):
-        new = {}
-        for v in bm.verts:
-            acc, cnt = v[lm], 1
-            for e in v.link_edges:
-                acc += e.other_vert(v)[lm]; cnt += 1
-            new[v.index] = acc / cnt
-        for v in bm.verts:
-            v[lm] = new[v.index]
-    for v in bm.verts:
-        v[lm] = sstep(0.12, 0.88, v[lm])
-    dele = [f for f in bm.faces if max(v[lm] for v in f.verts) < 0.12]
-    bmesh.ops.delete(bm, geom=dele, context='FACES')
-    for v in list(bm.verts):
-        if not v.link_faces:
-            bm.verts.remove(v)
-    fc = bm.verts.layers.float_color.new('Col')
-    for v in bm.verts:
-        m = v[lm]
-        n = Vector(v[lsn])
-        lump = 1 + 0.10 * noise.fractal(spos[v.index] * 1.3 + off, 0.5, 2.0, 2)
-        # rounded thickness profile: full blanket where the surface faces up, easing to a thin lip toward the contour
-        t = thick * sstep(0.46, 1.0, m) * lump
-        v.co = v.co + n * (t + 0.012)          # always lifted clear of the rock body: no coincident surfaces, so no z-fight teeth along the border
-        # the mask rides along in COLOR_0.r; the game's cap shader discards pixels below 0.5, giving a smooth,
-        # per-pixel contour instead of triangle-jagged edges
-        v[fc] = (m, m, m, 1.0)
-    vnorms = [Vector(v[lsn]) for v in bm.verts]
-    me = bpy.data.meshes.new('cap')
-    bm.to_mesh(me); bm.free()
-    for poly in me.polygons:
-        poly.use_smooth = True
-    me.normals_split_custom_set_from_vertices(vnorms)       # shade with the clean base-shape normals
-    return me
+def strata_variant(seed, lodres):
+    V, F = build_strata(seed, lodres)
+    N = vert_normals(V, F)
+    nz = Noise(seed)
+    adj = adjacency(F)
+    # cheaper AO: fewer rays on the big meshes
+    ao = bake_ao(V, F, N, rays=10 if len(V) > 3000 else 14, maxd=0.9)
+    ao = jacobi(ao, adj, len(V), 1)
+    sh = (0.80 + 0.20 * ao) * (0.50 + 0.50 * sstep(-0.42, 0.30, V[:, 1])) * (0.94 + 0.06 * nz(V, 1.5))
+    return V, F, N, np.clip(sh, 0, 1)
 
 
-def add_color(me, value=1.0):
-    attr = me.color_attributes.new('Col', 'FLOAT_COLOR', 'POINT')
-    for i in range(len(me.vertices)):
-        attr.data[i].color = (value, value, value, 1)
+def strata_cap(V, F, seed, thick):
+    """snow on the tier tops: mask from the surface normal, same technique as the other caps"""
+    n = len(V)
+    adj = adjacency(F)
+    nrm = jacobi(vert_normals(V, F), adj, n, 3)
+    nrm /= np.linalg.norm(nrm, axis=1, keepdims=True) + 1e-9
+    nz = Noise(seed + 9)
+    m = sstep(0.40, 0.86, nrm[:, 1] + 0.10 * nz(V, 1.5)) * sstep(-0.30, 0.05, V[:, 1])
+    m = jacobi(m, adj, n, 7)
+    m = sstep(0.12, 0.88, m)
+    keep = m[F].max(1) >= 0.12
+    t = thick * sstep(0.46, 1.0, m) * (1.0 + 0.10 * nz(V, 1.3))
+    Pc = V + nrm * (t + 0.012)[:, None]
+    Fk = F[keep]
+    used = np.unique(Fk)
+    remap = -np.ones(n, dtype=np.int64)
+    remap[used] = np.arange(len(used))
+    return Pc[used], remap[Fk], nrm[used], m[used]
 
 
+# ── export plumbing ───────────────────────────────────────────────────────────────────────────
 def quantize_glb(path):
-    """rewrite the GLB with compact vertex data: NORMAL int8 (normalized), COLOR_0 ubyte (normalized) -> KHR_mesh_quantization
-    (about half the bytes per vertex; three's GLTFLoader keeps them as normalised attributes)."""
+    """rewrite the GLB with compact vertex data: NORMAL int8 (normalized), COLOR_0 ubyte (normalized) -> KHR_mesh_quantization"""
     import json, struct
-    import numpy as np
     raw = open(path, 'rb').read()
     jlen = struct.unpack('<I', raw[12:16])[0]
     j = json.loads(raw[20:20 + jlen])
@@ -376,30 +676,89 @@ def quantize_glb(path):
         f.write(struct.pack('<II', len(out), 0x004E4942)); f.write(out)
 
 
-bpy.ops.wm.read_factory_settings(use_empty=True)
-col = bpy.data.collections.new('rocks'); bpy.context.scene.collection.children.link(col)
-for s in range(VARIANTS):
-    kind = KINDS[s]
-    seed = s * 17 + 3
-    meshes = []
-    for l in range(3):
+def main():
+    bpy.ops.wm.read_factory_settings(use_empty=True)
+    col = bpy.data.collections.new('rocks')
+    bpy.context.scene.collection.children.link(col)
+    report = []
+
+    def add_obj(name, me, loc):
+        ob = bpy.data.objects.new(name, me)
+        col.objects.link(ob)
+        ob.location = loc
+
+    for s, (kind, hero) in enumerate(VARIANTS):
+        if ONLY is not None and s not in ONLY:
+            continue
+        hs = 'H' if hero else 'S'
+        seed = s * 17 + 3
+        tris = []
         if kind == 'strata':
-            me = build_strata(seed, STRATA_RES[l])
+            for l in range(3):
+                V, F, N, sh = strata_variant(seed, STRATA_RES[l])
+                add_obj(f'rk{s}_{kind}_{hs}_lod{l}', make_mesh('b', V, F, N, sh), (s * 3.5, l * 3.5, 0))
+                if True:
+                    Pc, Fc, Nc, mc = strata_cap(V, F, seed, 0.105)
+                    add_obj(f'rk{s}_{kind}_{hs}_snow{l}', make_mesh('c', Pc, Fc, Nc, mc), (s * 3.5, l * 3.5, 0))
+                tris.append(len(F))
         else:
-            me = build_radial(kind, seed, (ICO if s in HERO else ICO_SMALL)[kind][l])
-        bake_ao(me, rays=24 if l == 0 else 12)
-        ob = bpy.data.objects.new(f'rock{s}_lod{l}', me); col.objects.link(ob)
-        ob.location = (s * 3.5, l * 3.5, 0)
-        meshes.append(me)
-    # snow caps are built on the same-resolution mesh (LOD0 cap on LOD0 body, LOD1 on LOD1) so the contour is smooth
-    for l in range(2):
-        cap = snow_cap(meshes[l], seed + 101, 0.105 if kind != 'slab' else 0.08)
-        ob = bpy.data.objects.new(f'rock{s}_snow_lod{l}', cap); col.objects.link(ob)
-        ob.location = (s * 3.5, l * 3.5, 0)
-    print('rock', s, kind, 'done', flush=True)
-TMP = OUT + '.tmp.glb'
-bpy.ops.export_scene.gltf(filepath=TMP, export_format='GLB', export_vertex_color='ACTIVE',
-                          export_apply=False, export_yup=False, export_materials='NONE')
-quantize_glb(TMP)
-os.replace(TMP, OUT)
-print('wrote', OUT, os.path.getsize(OUT) // 1024, 'KB')
+            rnd = random.Random(seed)
+            spec = SPEC[kind](rnd, seed, hero)
+            noise = Noise(seed)
+            R = rot_matrix(rnd)
+            Uh, Fh = ico(HI_SUB)
+            Uh = Uh @ R.T
+            Vh, norm = rock_shape(spec, Uh, noise)
+            Nh = vert_normals(Vh, Fh)
+            shade_hi = bake_shade(Vh, Fh, Nh, noise, spec, banded=(kind in ('chunk', 'stack', 'shard') and rnd.random() < 0.4))
+            lee_az = rnd.uniform(0, TAU)
+            for l in range(4):
+                V, F, N, sh = build_body(Vh, Fh, Nh, shade_hi, TRIS[hero][l], SHRINK[l] * (1.0 if not hero else 0.7))
+                add_obj(f'rk{s}_{kind}_{hs}_lod{l}', make_mesh('b', V, F, N, sh), (s * 3.5, l * 3.5, 0))
+                tris.append(len(F))
+            thick = (0.07 if hero else 0.10) * (0.8 if kind == 'slab' else 1.0)
+            for l in range(4):
+                sub = CAPSUB[hero][l]
+                Uc, Fc0 = ico(sub)
+                Uc = Uc @ R.T
+                Pc, Fc, Nc, mc = snow_cap(spec, noise, norm, Uc, Fc0, thick, lee_az, seed + 101, iters=1, lip=LIP[l])
+                add_obj(f'rk{s}_{kind}_{hs}_snow{l}', make_mesh('c', Pc, Fc, Nc, mc), (s * 3.5, l * 3.5, 0))
+                tris.append(len(Fc))
+        report.append((s, kind, hs, tris))
+        print('rock', s, kind, hs, tris, flush=True)
+
+    # pebbles
+    for j in range(N_PEB):
+        if ONLY is not None and 100 not in ONLY:
+            break
+        seed = 900 + j * 13
+        rnd = random.Random(seed)
+        spec = spec_pebble(rnd, seed)
+        noise = Noise(seed)
+        R = rot_matrix(rnd)
+        Uh, Fh = ico(4)
+        Uh = Uh @ R.T
+        Vh, norm = rock_shape(spec, Uh, noise)
+        Nh = vert_normals(Vh, Fh)
+        tree_ao = bake_ao(Vh, Fh, Nh, rays=12, maxd=0.8)
+        shade = np.clip((0.78 + 0.22 * tree_ao) * (0.5 + 0.5 * sstep(-0.6, 0.2, Vh[:, 1])), 0, 1)
+        top = sstep(0.55, 0.9, Nh[:, 1])
+        V, F, N, pr = None, None, None, None
+        V2, F2 = decimate(Vh, Fh, 40)
+        pj = project(V2, Vh, Fh, {'n': Nh, 's': shade[:, None], 't': top[:, None]})
+        N2 = pj['n'] / (np.linalg.norm(pj['n'], axis=1, keepdims=True) + 1e-9)
+        cols = np.stack([pj['s'][:, 0], pj['t'][:, 0], np.zeros(len(V2))], 1)
+        add_obj(f'pb{j}', make_mesh('p', V2, F2, N2, cols), (j * 1.5, 12, 0))
+        print('pebble', j, len(F2), flush=True)
+
+    TMP = OUT + '.tmp.glb'
+    bpy.ops.export_scene.gltf(filepath=TMP, export_format='GLB', export_vertex_color='ACTIVE',
+                              export_apply=False, export_yup=False, export_materials='NONE')
+    quantize_glb(TMP)
+    os.replace(TMP, OUT)
+    print('wrote', OUT, os.path.getsize(OUT) // 1024, 'KB')
+
+
+main()
+sys.stdout.flush()
+os._exit(0)       # skip bpy's interpreter teardown (segfaults on exit in some builds)
