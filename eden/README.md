@@ -7,7 +7,7 @@ cd eden && python3 -m http.server 8123   # 打开 http://localhost:8123
 ```
 
 操作:WASD 移动 · Shift 奔跑 · 空格 跳跃 · 鼠标视角(点击进入,Esc 释放)。
-URL 参数:`?q=low` 低画质(2K 阴影、1x 像素比);`?cam=x,z,yaw°,pitch°[,y]` 调试机位;`?shot` 隐藏 HUD。
+URL 参数:`?q=low` 低画质(2K 阴影、1x 像素比);`?noao` 关闭环境光遮蔽;`?norocks` 使用代码生成岩石;`?cam=x,z,yaw°,pitch°[,y]` 调试机位;`?shot` 隐藏 HUD。
 
 ## 已完成范围
 线性路线:**雪原入口 → 废弃城区 → 雪原峡谷(圆环地标)→ 封闭的工厂大门**
@@ -18,14 +18,17 @@ URL 参数:`?q=low` 低画质(2K 阴影、1x 像素比);`?cam=x,z,yaw°,pitch°[
 **未完成(规划中)**:地下设施、高地与环带观景台、特殊遗迹区(倒塌巨构区)。
 
 ## Blender 资产管线(`tools/`)
-需要 `pip install bpy==4.2.0`,无头运行,输出到 `assets/`:
-- `python3 tools/gen_rocks.py` → `rocks.glb`:10 种雕刻岩石 × 3 级 LOD(最高约 2 万三角面),烘焙遮蔽。
-- `python3 tools/gen_buildings.py [id]` → `buildings.glb`:按 `tools/buildings.json` 建模 10 栋建筑 × 3 级 LOD。墙面嵌板/竖缝窗/大门是网格里真实的凹陷,倒角圆边,扶壁、檐口、栈桥、管道、屋顶设备,烘焙顶点 AO。该 JSON 同时驱动游戏里的摆放、碰撞和积雪。
-- 资产缺失时游戏自动回退到代码生成版本。注意 `buildings.glb` 约 18MB,上线时应开启 gzip/brotli 或后续做网格量化。
+需要 `pip install bpy==4.2.0`,无头运行,确定性输出到 `assets/`。资产缺失时游戏自动回退到代码生成版本。
+- `gen_buildings.py [id]` → `buildings.glb`(约 6MB,15 栋、3 级 LOD)。由 `tools/buildings.json` 驱动(同时生成 `assets/buildings.json` 与 `src/fallback_specs.js`),该规格也决定游戏里的摆放、碰撞与屋顶积雪。嵌板/竖缝窗是网格里真实的凹陷,倒角圆边,烘焙 AO。
+- `gen_props.py` → `props.glb`(约 4MB):8 种针塔、8 种倒塌巨板(灰/橙)、集装箱、格构支柱。
+- `gen_rocks.py` → `rocks.glb`(约 5MB):15 种雕刻岩石(圆润卵石、碎块、板岩、岩层堆叠),烘焙 AO。由 `src/scatter.js` 成簇摆放。
+- `gen_structures.py` → `structures.glb`(约 5.4MB):拱形高架桥模块、圆环(160 段旋转体)、工厂大门、龙门架、天桥桁架、楼梯、废墟墙、机库。
+- 生成脚本里的已知坑:`extrude_face_region` 默认保留原面;圆锥半径方向在旋转后颠倒;烘焙 AO 前必须先细分。
+- 上线建议:开启 gzip/brotli(`python http.server` 不压缩,四个 GLB 合计约 21MB,压缩后约 9MB)。
 
 ## 技术要点
 - 几何:真实凹陷窗洞(双层立面挤出)、圆角倒角、放样(loft)柱体/尖塔、平滑积雪层、软最小值雕刻岩石;无 Cube+Cone 拼接。
-- 圆环 192 段曲面;每个主要结构 LOD0–LOD3(`THREE.LOD`),远处小物体距离剔除。
+- 每个主要结构 LOD0–LOD3(`THREE.LOD`),远处小物体距离剔除;圆环为高细分旋转体。
 - 地形:解析高度场(渲染/碰撞/摆放共用),64m 分块 4 级 LOD,法线分级平滑,岩层条纹在着色器中按世界高度绘制。
 - 着色:3 阶卡通光照 + 冷色环境光;所有朝上表面自动"手绘积雪";AO 烘焙进顶点色(未使用法线贴图)。
 - 优化:同材质合并批次;未使用 GPU instancing 与遮挡剔除(WebGL 无 Nanite)。

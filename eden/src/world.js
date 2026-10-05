@@ -7,6 +7,7 @@ import { viaduct, catwalk, stairs, ringGate, spireCluster } from './arch_infra.j
 import { rock, leaningSlab, container, pipeGantry, ruinWall, factoryGate, transitHall } from './arch_props.js';
 import { heightAt, canyonX, canyonHalfWidthAt, addFootprint, PLATEAU_H, HALF_X } from './terrain.js';
 import { rng } from './noise.js';
+import { scatterWorld } from './scatter.js';
 
 import FALLBACK_SPECS_JSON from './fallback_specs.js';
 const FALLBACK_SPECS = FALLBACK_SPECS_JSON;
@@ -39,9 +40,11 @@ export async function buildWorld(scene, onProgress = () => {}) {
   // ── overhead bridge between the two hero buildings + stair up to it ─────────────────────────
   job(() => {
     const y = 8.6 + ground(0, 107);
+    let gy = ground(-14, 125), n = 0;
+    for (let k = 0; k < 3; k++) { n = Math.max(2, Math.round((y - gy) / 0.2)); gy = ground(-14, 107 + 4.7 + n * 0.36); }
     put(makeStructure((lod, B, col) => {
       catwalk(B, lod, col, { x0: -20, x1: 20, y, z: 0, width: 4.6, gaps: [{ side: 1, x0: -16.2, x1: -11.8 }] });
-      stairs(B, lod, col, { x: -14, z: 2.3 + 15.3, y: ground(-14, 125), rise: y - ground(-14, 125), dir: Math.PI, width: 3.6 });
+      stairs(B, lod, col, { x: -14, z: 4.7 + n * 0.36, y: gy, rise: y - gy, dir: Math.PI, width: 3.6 });
     }, { x: 0, y: 0, z: 107, lods: [0, 140, 300, 600] }));
   });
 
@@ -65,8 +68,8 @@ export async function buildWorld(scene, onProgress = () => {}) {
   // ── entrance viaduct: a walkable gateway over the first snowfield ──────────────────────────────
   {
     const Z = 172, DECK = 16.5, SPAN = 22, L = 3 * SPAN;
-    const x0s = -253;
-    const nseg = 8;
+    const x0s = -165;     // piers sit at x0s + 22k; beyond |x|~150 the mesas rise above the deck, so the span ends inside them
+    const nseg = 5;
     for (let i = 0; i < nseg; i++) {
       const a = x0s + i * L, b = a + L, cx = (a + b) / 2;
       job(() => {
@@ -76,16 +79,17 @@ export async function buildWorld(scene, onProgress = () => {}) {
         if (sx > a && sx < b) gaps.push({ side: 1, x0: sx - 2.2 - cx, x1: sx + 2.2 - cx });
         put(makeStructure((lod, B, col) => {
           viaduct({ x0: -L / 2, x1: L / 2, deckY: DECK, span: SPAN, endPier: i === nseg - 1, gaps, ground: (lx) => ground(cx + lx, Z) })(lod, B, col);
-        }, { x: cx, y: 0, z: Z, lods: [0, 150, 330, 700] }));
+        }, { x: cx, y: 0, z: Z, lods: [0, 90, 260, 700] }));
       });
     }
     // switchback-free long stair on the south face (world z from 213 down to 178.7)
     job(() => {
       const sx = -66, zTop = Z + 6.5 + 0.2;
-      const y0 = ground(sx, zTop + 33);
+      let y0 = ground(sx, zTop + 33), n = 0;
+      for (let k = 0; k < 3; k++) { n = Math.max(2, Math.round((DECK - y0) / 0.2)); y0 = ground(sx, zTop + n * 0.36); }
       put(makeStructure((lod, B, col) => {
-        stairs(B, lod, col, { x: 0, z: 0, y: 0, rise: DECK + 0.0 - y0, dir: Math.PI, width: 3.8 });
-      }, { x: sx, y: y0, z: zTop + (DECK - y0) / 0.2 * 0.36, lods: [0, 150, 330, 700] }));
+        stairs(B, lod, col, { x: 0, z: 0, y: 0, rise: DECK - y0, dir: Math.PI, width: 3.8 });
+      }, { x: sx, y: y0, z: zTop + n * 0.36, lods: [0, 90, 260, 700] }));
     });
   }
 
@@ -100,10 +104,37 @@ export async function buildWorld(scene, onProgress = () => {}) {
   job(() => { const x = canyonX(-178), y = ground(x, -178); put(makeStructure(factoryGate({}), { x, y: y - 0.3, z: -178, lods: [0, 160, 340, 700] })); });
 
   // ── landmark spires: city skyline + rim silhouettes beyond the cliffs ──────────────────────────
-  const spire = (x, z, seed, count, height, spread, wide, y) => job(() => {
-    const yy = ground(x, z) - 2.5;
-    put(makeStructure(spireCluster({ seed, count, height, spread, wide }), { x, y: yy, z, lods: [0, 220, 480, 900] }));
-  });
+  // needles are placed on calm ground only: search around the wished spot for the flattest footprint (no floating bases on cliff faces)
+  const flatness = (x, z, r) => {
+    const c = ground(x, z);
+    let m = 0;
+    for (let k = 0; k < 8; k++) {
+      const a = k * 0.7854;
+      m = Math.max(m, Math.abs(ground(x + Math.cos(a) * r, z + Math.sin(a) * r) - c), Math.abs(ground(x + Math.cos(a) * r * 0.5, z + Math.sin(a) * r * 0.5) - c));
+    }
+    return m;
+  };
+  const sr = rng(31337);
+  // the hall's west exit yard and its approach lane must stay open: spires never stand inside any keep-clear rect (walk-through branch exits)
+  keepClear.push({ x: -121, z: 49, hx: 22, hz: 11 });
+  const inKeepClear = (x, z, rad) => keepClear.some((k) => Math.abs(x - k.x) < k.hx + rad && Math.abs(z - k.z) < k.hz + rad);
+  const spire = (x0, z0, seed, count, height, spread, wide, search = 70) => {
+    const pen = (x, z) => flatness(x, z, spread) + (inKeepClear(x, z, spread + wide + 4) ? 99 : 0);
+    let bx = x0, bz = z0, bf = pen(x0, z0);
+    for (let t = 0; t < 90 && bf > 2.2; t++) {
+      const a = sr() * Math.PI * 2, d = sr() * search;
+      const x = x0 + Math.cos(a) * d, z = z0 + Math.sin(a) * d;
+      if (Math.abs(x) > 480 || z > 520 || z < -500) continue;
+      const f = pen(x, z);
+      if (f < bf) { bf = f; bx = x; bz = z; }
+    }
+    if (bf > 4.5) return;      // nowhere calm: skip rather than float
+    keepClear.push({ x: bx, z: bz, hx: spread * 0.6 + wide, hz: spread * 0.6 + wide });      // boulders / later spires keep off the needle bases
+    job(() => {
+      const yy = ground(bx, bz) - 2.5;
+      put(makeStructure(spireCluster({ seed, count, height, spread, wide }), { x: bx, y: yy, z: bz, lods: [0, 220, 480, 900] }));
+    });
+  };
   spire(96, 36, 1, 5, 125, 20, 5.5);
   spire(-112, 140, 2, 4, 105, 16, 5);
   spire(150, 130, 3, 6, 150, 24, 6.5);
@@ -111,58 +142,30 @@ export async function buildWorld(scene, onProgress = () => {}) {
   spire(-250, 150, 5, 4, 120, 14, 5);
   spire(250, 170, 6, 5, 130, 18, 5.5);
   spire(60, -20, 7, 3, 70, 10, 4.6);
+  // mid-field needles scattered across the ground plane in front of the viaduct (composition: spires in the whole mid-ground, as in the concept)
+  spire(-46, 206, 40, 4, 62, 9, 4.6, 16);
+  spire(40, 198, 41, 3, 78, 8, 4.6, 16);
+  spire(-24, 188, 42, 3, 46, 7, 4.0, 12);
+  spire(27, 226, 43, 3, 40, 7, 3.8, 12);
+  spire(-80, 234, 44, 4, 70, 10, 4.8, 18);
+  spire(78, 228, 45, 4, 66, 10, 4.8, 18);
   {
     const r = rng(404);
     for (let i = 0; i < 26; i++) {
       const a = (i / 26) * Math.PI * 2 + r() * 0.2;
       const d = 340 + r() * 520;
       const x = Math.cos(a) * d * 0.9, z = Math.sin(a) * d * 1.1 - 10;
-      spire(x, z, 100 + i, 3 + Math.floor(r() * 4), 110 + r() * 130, 16 + r() * 14, 5 + r() * 3);
+      spire(x, z, 100 + i, 3 + Math.floor(r() * 4), 110 + r() * 130, 16 + r() * 14, 5 + r() * 3, 110);
     }
     for (let i = 0; i < 8; i++) { // spires standing on the canyon rim
       const z = -30 - i * 24, side = i % 2 ? 1 : -1;
-      spire(canyonX(z) + side * (88 + r() * 20), z, 200 + i, 3, 70 + r() * 40, 12, 5);
+      spire(canyonX(z) + side * (88 + r() * 20), z, 200 + i, 3, 70 + r() * 40, 12, 5, 40);
     }
   }
 
-  // ── sculpted rocks: scatter for cover, hand-keyed by region ─────────────────────────────────
-  {
-    const r = rng(2024);
-    const tryPlace = (xMin, xMax, zMin, zMax, n, sizeMin, sizeMax, redP) => {
-      for (let i = 0, ok = 0; ok < n && i < n * 12; i++) {
-        const x = xMin + r() * (xMax - xMin), z = zMin + r() * (zMax - zMin);
-        const y = ground(x, z);
-        if (y > 3 + (z < 20 ? -40 : 0) && y > ground(x + 3, z) + 6) continue;
-        // keep the central route readable, avoid overlapping buildings
-        if (keepClear.some((k) => Math.abs(x - k.x) < k.hx && Math.abs(z - k.z) < k.hz)) continue;
-        if (z > 36 && z < 140 && Math.abs(x) < 20) continue;
-        if (z < 48 && z > -195 && Math.abs(x - canyonX(z)) < 15) continue;   // keep the canyon route open
-        if (Math.abs(x) < 8 && z > 150 && z < 250 && r() < 0.8) continue;
-        const sz = sizeMin + r() * (sizeMax - sizeMin) * r();
-        const sd = Math.floor(r() * 1e5);
-        job(() => {
-          const g = ground(x, z);
-          put(makeStructure(rock({ seed: sd, size: sz, red: r() < redP, planes: 5 + Math.floor(r() * 4) }), { x, y: g - sz * 0.15, z, yaw: r() * 6.28, lods: [0, 90, 220], cull: 480, cast: sz > 4 }));
-        });
-        ok++;
-      }
-    };
-    tryPlace(-150, 150, 180, 262, 70, 1.4, 6.5, 0.35);   // entrance field
-    for (const [x, z, sz, red] of [[-16, 236, 5.2, true], [20, 222, 4.4, false], [-34, 204, 3.6, true], [30, 252, 3.2, false], [-6, 196, 3, true]])
-      job(() => put(makeStructure(rock({ seed: Math.floor(x * 7 + z), size: sz, red, planes: 7 }), { x, y: ground(x, z) - sz * 0.2, z, yaw: x, lods: [0, 90, 220], cull: 520 })));
-    tryPlace(-110, 110, 40, 140, 10, 1.5, 3.2, 0.3);     // city rubble
-    for (let z = 20; z > -190; z -= 20) tryPlace(canyonX(z) - 38, canyonX(z) + 38, z - 10, z + 10, 3, 1.8, 6.5, 0.4); // canyon floor
-    for (let z = 20; z > -190; z -= 22) { // outcrops hugging the walls
-      tryPlace(canyonX(z) - 56, canyonX(z) - 36, z - 11, z + 11, 1, 5, 11, 0.5);
-      tryPlace(canyonX(z) + 36, canyonX(z) + 56, z - 11, z + 11, 1, 5, 11, 0.5);
-    }
-    // massive sculpted buttresses breaking up the canyon contour lines
-    for (let z = 12; z > -190; z -= 34) for (const side of [-1, 1]) {
-      const x = canyonX(z) + side * (canyonHalfWidthAt(z) + 3 + r() * 9);
-      const sz = 12 + r() * 12, sd = Math.floor(r() * 1e5), red = r() < 0.4;
-      job(() => put(makeStructure(rock({ seed: sd, size: sz, red, planes: 7, flat: 0.8, squash: 1.1 }), { x, y: ground(x, z) - sz * 0.35, z: z + (r() - 0.5) * 12, yaw: r() * 6.28, lods: [0, 120, 260], cull: 700 })));
-    }
-  }
+  // ── boulder scatter (src/scatter.js): hand-placed hero clusters + noise-clustered fields ───────────────
+  const scat = scatterWorld({ job, put, ground, keepClear });
+  console.info('scatter clusters ' + scat.clusters + ' rocks ' + scat.rocks);
 
   const prof = [];
   let slice = performance.now();

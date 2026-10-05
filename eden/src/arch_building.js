@@ -58,6 +58,20 @@ function layoutFace(W, H, o, r, withDoor) {
   return { back, skin, pil, nf, gf, fh };
 }
 
+/** two door leaves set into the entrance recess: slab, raised panels, vision slit, push bars, kick plates (the recess is no longer a blind dark rectangle) */
+function doorLeaves(B, lod, face, cw, cd, y0) {
+  for (const sx of [-1, 1]) {
+    B.add('metal', rbox(1.9, 5.0, 0.36, 0.06, 2), mulOff(face, cw, cd, y0, 0.3, sx * 0.98, 2.6));
+    if (lod > 0) continue;
+    B.add('wall', rbox(1.45, 1.75, 0.1, 0.04, 1), mulOff(face, cw, cd, y0, 0.5, sx * 0.98, 1.75));
+    B.add('wall', rbox(1.45, 1.55, 0.1, 0.04, 1), mulOff(face, cw, cd, y0, 0.5, sx * 0.98, 3.75));
+    B.add('glass', rbox(0.32, 0.9, 0.06, 0.02, 1), mulOff(face, cw, cd, y0, 0.55, sx * 0.98, 4.5));
+    B.add('accentDark', rbox(1.7, 0.5, 0.06, 0.02, 1), mulOff(face, cw, cd, y0, 0.5, sx * 0.98, 0.45));
+    B.add('trim', cyl(0.045, 0.045, 0.9, 8).rotateZ(Math.PI / 2), mulOff(face, cw, cd, y0, 0.62, sx * 0.55, 2.4));
+  }
+  B.add('trim', rbox(0.12, 5.0, 0.08, 0.02, 1), mulOff(face, cw, cd, y0, 0.5, 0, 2.6));
+}
+
 function buildFace(B, lod, face, cw, cd, y0, H, o, r, withDoor) {
   const W = face[0] === 'z' ? cw + 2 * FACE : cd;
   if (lod >= 2) return;
@@ -71,6 +85,7 @@ function buildFace(B, lod, face, cw, cd, y0, H, o, r, withDoor) {
     mulOff(face, cw, cd, y0, 0.1));
   B.add('wall', slabWithHoles(W, H, 0.5, skinHoles, { bevel: 0.06, curveSegments: detail ? 3 : 1 }),
     mulOff(face, cw, cd, y0, 0.6));
+  if (withDoor) doorLeaves(B, lod, face, cw, cd, y0);
   if (!detail) return;
   // pilasters between bay groups
   for (const px of L.pil) {
@@ -98,18 +113,20 @@ function buildFace(B, lod, face, cw, cd, y0, H, o, r, withDoor) {
 
 function accentSlabs(B, lod, o, cw, cd, y0, H) {
   for (const a of o.accent ?? []) {
-    const segH = 8.2, gap = 0.22;
-    let y = a.from ?? 1.2;
-    const to = Math.min(a.to ?? H - 1.6, H - 0.8);
-    while (y < to - 1) {
-      const sh = Math.min(segH, to - y);
-      const m = mulOff(a.face, cw, cd, y0, FACE + 0.22, a.x ?? 0, y + sh / 2);
-      B.add('accent', rbox(a.w * 1.25, sh - gap, 0.7, 0.2, lod === 0 ? 3 : 1), m);
-      if (lod === 0 && sh > 3) {
-        B.add('accentDark', rbox(a.w - 1.0, sh - gap - 1.1, 0.2, 0.08, 2), mulOff(a.face, cw, cd, y0, FACE + 0.55, a.x ?? 0, y + sh / 2));
-        B.add('accentDark', rbox(a.w - 0.1, 0.18, 0.62, 0.05, 1), mulOff(a.face, cw, cd, y0, FACE + 0.22, a.x ?? 0, y + sh - gap / 2 - 0.35));
+    // tall fin built from stacked modules (4-5 m, seam every module), two columns when wide; each module has a chamfered frame and a raised inner plate
+    const segH = lod === 0 ? 4.4 : 7.0, gap = 0.26;
+    const fw = a.w * 1.25, ncol = lod === 0 && fw >= 5 ? 2 : 1, cwid = (fw - 0.28 * (ncol - 1)) / ncol;
+    for (let c = 0; c < ncol; c++) {
+      let y = (a.from ?? 1.2) + (c ? segH * 0.5 : 0);
+      const to = Math.min(a.to ?? H - 1.6, H - 0.8);
+      const ux = (a.x ?? 0) - fw / 2 + cwid / 2 + c * (cwid + 0.28);
+      while (y < to - 1) {
+        const sh = Math.min(segH, to - y);
+        B.add('accent', rbox(cwid, sh - gap, 0.7, 0.18, lod === 0 ? 3 : 1), mulOff(a.face, cw, cd, y0, FACE + 0.22, ux, y + sh / 2));
+        if (lod === 0 && sh > 2.4)
+          B.add(c ? 'accent' : 'accentDark', rbox(cwid - 1.1, sh - gap - 1.1, 0.16, 0.06, 2), mulOff(a.face, cw, cd, y0, FACE + 0.62, ux, y + sh / 2));
+        y += sh;
       }
-      y += sh;
     }
   }
 }
@@ -223,29 +240,63 @@ class TierBatch {
 }
 
 
-/** Building modelled in Blender (tools/gen_buildings.py): wall/window/panel geometry comes from the GLB,
- *  roof & ledge snow, ground steps and collision are generated from the same spec. */
+/** Blender-authored buildings (tools/gen_buildings.py): facade recesses, fins, galleries, wings, roof gear and modelled snow all come
+ *  from the GLB; collision comes from spec.cols (building-local AABBs computed by the generator) or, failing that, from the tier boxes.
+ *  The GLB stores NORMAL as int8 / COLOR_0 as ubyte (KHR_mesh_quantization): normals are expanded to float32 once per geometry. */
+const _plain = new WeakMap();
+const WEAR_FLAT = 0.78, WEAR_TINT = 1 / (0.58 + 0.42 * WEAR_FLAT);   // flat surfaces keep their brightness, convex edges end up ~10% lighter
+const WEAR_COL = new THREE.Color(WEAR_TINT, WEAR_TINT, WEAR_TINT);
+function plainGeo(geo, wear) {
+  const key = wear ? 1 : 0;
+  let m = _plain.get(geo);
+  if (m && m[key]) return m[key];
+  let g = geo;
+  const n = geo.getAttribute('normal'), p = geo.getAttribute('position');
+  const qpos = p && p.array.constructor !== Float32Array;            // int16 in 1/128 m
+  if ((n && n.array.constructor !== Float32Array) || qpos) {
+    g = new THREE.BufferGeometry();
+    if (geo.index) g.setIndex(geo.index);
+    for (const k of Object.keys(geo.attributes)) if (k !== 'normal' && k !== 'position') g.setAttribute(k, geo.attributes[k]);
+    if (qpos) {
+      const f = new Float32Array(p.count * 3);
+      for (let i = 0; i < p.count; i++) { f[i * 3] = p.getX(i) / 128; f[i * 3 + 1] = p.getY(i) / 128; f[i * 3 + 2] = p.getZ(i) / 128; }
+      g.setAttribute('position', new THREE.BufferAttribute(f, 3));
+    } else g.setAttribute('position', p);
+    if (n && n.array.constructor !== Float32Array) {
+      const f = new Float32Array(n.count * 3), v = new THREE.Vector3();
+      for (let i = 0; i < n.count; i++) { v.set(n.getX(i), n.getY(i), n.getZ(i)).normalize(); f[i * 3] = v.x; f[i * 3 + 1] = v.y; f[i * 3 + 2] = v.z; }
+      g.setAttribute('normal', new THREE.BufferAttribute(f, 3));
+    } else if (n) g.setAttribute('normal', n);
+  }
+  const c = geo.getAttribute('color');
+  if (wear && c && c.itemSize >= 2) {
+    // COLOR_0 = (baked AO, edge wear 0.5 neutral .. 1 convex edge, 0, 1): fold the wear into the AO the Batch understands
+    if (g === geo) g = geo.clone();
+    const f = new Float32Array(c.count * 3);
+    for (let i = 0; i < c.count; i++) {
+      const w = Math.max(0, (c.getY(i) - 0.5) * 2);
+      f[i * 3] = c.getX(i) * (WEAR_FLAT + (1 - WEAR_FLAT) * w);
+    }
+    g.setAttribute('color', new THREE.BufferAttribute(f, 3));
+  }
+  if (!m) _plain.set(geo, (m = [null, null]));
+  m[key] = g;
+  return g;
+}
+
 export function buildingAsset(spec) {
   const lib = ASSETS.buildings?.[spec.id];
   if (!lib) return building(spec);
   return (lod, B, col) => {
     const parts = lib[Math.min(lod, 2)];
-    for (const [mat, geo] of Object.entries(parts)) B.add(mat, geo, null);
+    for (const [mat, geo] of Object.entries(parts))
+      B.add(mat, plainGeo(geo, mat !== 'snow'), null, mat === 'snow' ? { noAO: true, tint: snowTint(spec.id) } : { tint: WEAR_COL });
+    if (spec.cols) { for (const b of spec.cols) col(b[0], b[1], b[2], b[3], b[4], b[5]); return; }
     let y0 = 0;
-    const tiers = spec.tiers;
-    tiers.forEach((t, ti) => {
-      const w = t.w, d = t.d, H = t.h, ox = t.ox ?? 0;
-      if (lod < 2) {
-        const up = tiers[ti + 1];
-        if (!up) B.add('snow', snowPillow(w - 2.4, d - 2.4, 0.9, { seed: ti + 3, seg: lod === 0 ? 22 : 12, bury: 0.9 }), M(ox, y0 + H + 0.1, 0), { noAO: true, tint: snowTint(ti) });
-        else {
-          const gz = (d - up.d) / 2;
-          if (gz > 2.2) for (const sg of [-1, 1])
-            B.add('snow', snowPillow(w - 2.4, gz - 0.9, 0.95, { seed: ti * 5 + (sg > 0 ? 1 : 2), seg: 16, bury: 0.8 }), M(ox, y0 + H + 0.05, sg * (d / 2 - gz / 2 - 0.1)), { noAO: true, tint: snowTint(ti + sg) });
-        }
-      }
-      col(ox - w / 2, y0, -d / 2, ox + w / 2, y0 + H + 1.2, d / 2);
-      y0 += H;
-    });
+    for (const t of spec.tiers) {
+      const ox = t.ox ?? 0, oz = t.oz ?? 0;
+      col(ox - t.w / 2, y0, oz - t.d / 2, ox + t.w / 2, y0 + t.h + 1.2, oz + t.d / 2);
+      y0 += t.h;
+    }
   };
 }

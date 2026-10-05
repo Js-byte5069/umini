@@ -2,9 +2,9 @@
 import * as THREE from 'three';
 import { M, rbox, cyl, strut, loft, extrude, slabWithHoles, sculptRock, snowPillow, snowTint, frame, roundRectPath } from './kit.js';
 import { building } from './arch_building.js';
-import { railing } from './arch_infra.js';
+import { railing, snowDrift, snowCap as topSnow } from './arch_infra.js';
 import { rng } from './noise.js';
-import { ASSETS, addProp } from './assets.js';
+import { ASSETS, addProp, addStruct } from './assets.js';
 
 const V = (x, y, z) => new THREE.Vector3(x, y, z);
 
@@ -33,11 +33,13 @@ export function rock({ seed = 1, size = 3, red = false, flat = 0.7, planes = 6, 
 /** big leaning concrete slab (as in the fallen-megastructure concept): tilted rbox with segmented face + snow */
 export function leaningSlab({ w = 14, h = 40, t = 6, tilt = 0.5, seed = 1, red = false }) {
   return (lod, B, col) => {
-    const name = (red ? 'slabr' : 'slab') + (Math.abs(seed) % 3);
+    const name = (red ? 'slabr' : 'slab') + (Math.abs(seed) % 4);
     if (!addProp(B, name, lod, M(0, -0.5, 0, 0, 0, tilt, w / 14, h / 40, t / 6))) {
       B.add(red ? 'accent' : 'wall', rbox(w, h, t, 0.7, lod === 0 ? 4 : 2), M(0, h / 2 * Math.cos(tilt), 0, 0, 0, tilt));
     }
-    if (lod < 2) B.add('snow', snowPillow(w * 1.8, t * 3.4, 2.4, { seed, seg: 18, bury: 1.8 }), M(0, -0.5, 0), { noAO: true, tint: snowTint(seed) });
+    if (lod < 2) B.add('snow', snowDrift([
+      [0, 0, w * 0.7, t * 1.5 + 1.2, 1.9], [-w * 0.42, t * 1.5, w * 0.42, 2.8, 1.05, 0.3], [w * 0.4, -t * 1.3, w * 0.44, 2.6, 1.15, -0.3], [w * 0.1, t * 2.2, w * 0.6, 1.8, 0.55, 0.15],
+    ], { seed, cell: lod === 0 ? 0.8 : 1.4, bury: 2.6 }), M(0, -0.4, 0), { noAO: true, tint: snowTint(seed) });
     const hx = Math.sin(tilt) * h * 0.5;
     col(-w / 2 - hx * 0.2, -1, -t, w / 2, 4.2, t);
   };
@@ -49,13 +51,32 @@ export function container({ seed = 1, accent = false }) {
     if (!addProp(B, 'container0', lod, M(0, 0, 0), accent ? { metal: 'accentDark', wallLight: 'accent' } : {})) {
       B.add(accent ? 'accentDark' : 'metal', rbox(L, H, W, 0.1, 2), M(0, H / 2 + 0.1, 0));
     }
-    if (lod < 2) B.add('snow', snowPillow(L - 0.2, W - 0.1, 0.35, { seed, seg: 10, bury: 0.2 }), M(0, H + 0.16, 0), { noAO: true, tint: snowTint(seed) });
+    if (lod < 2) B.add('snow', topSnow(L - 0.5, W - 0.3, 0.4, seed, { cell: 0.45 }), M(0, H + 0.14, 0), { noAO: true, tint: snowTint(seed) });
     col(-L / 2, 0, -W / 2, L / 2, H + 0.2, W / 2);
   };
 }
 
 /** overhead pipe gantry spanning the street (walk under it) */
-export function pipeGantry({ span = 30, h = 11, depth = 7 }) {
+export function pipeGantry(o = {}) {
+  const { span = 30, h = 11, depth = 7 } = o;
+  return ASSETS.structs?.gantry && span === 32 && h === 11 && depth === 7 ? pipeGantryAsset() : pipeGantryProc(o);
+}
+
+// Blender gantry (tools/gen_structures.py): four lattice towers with gusset plates, portal beams, plate girders with stiffeners,
+// ribbed deck, railings, three flanged pipes on saddles, vent stack, valve wheel and pump cabinet.
+function pipeGantryAsset() {
+  return (lod, B, col) => {
+    const span = 32, h = 11, depth = 7, hs = span / 2;
+    addStruct(B, 'gantry', lod, M(0, 0, 0));
+    for (const sx of [-1, 1]) {
+      for (const sz of [-1, 1]) col(sx * hs - 1.2, -1, sz * depth / 2 - 1.2, sx * hs + 1.2, h, sz * depth / 2 + 1.2);
+      if (lod < 2) B.add('snow', snowDrift([[0, 0, 3.6, depth * 0.5 + 2.4, 0.95], [sx * 1.6, 2.4, 2.4, 2.0, 0.6, 0.4], [-sx * 1.2, -2.6, 2.2, 1.8, 0.5]], { seed: sx + 4, cell: 0.7, bury: 1.8 }), M(sx * hs, -0.25, 0), { noAO: true, tint: snowTint(sx) });
+    }
+    if (lod < 2) B.add('snow', topSnow(span * 0.86, depth * 0.5, 0.5, 3, { cell: 0.6 }), M(0, h + 1.5, 0), { noAO: true, tint: snowTint(2) });
+  };
+}
+
+function pipeGantryProc({ span = 30, h = 11, depth = 7 }) {
   return (lod, B, col) => {
     const hs = span / 2;
     for (const sx of [-1, 1]) {
@@ -66,7 +87,7 @@ export function pipeGantry({ span = 30, h = 11, depth = 7 }) {
         }
         col(sx * hs - 1.2, -1, sz * depth / 2 - 1.2, sx * hs + 1.2, h, sz * depth / 2 + 1.2);
       }
-      if (lod < 2) B.add('snow', snowPillow(6, depth + 4, 0.9, { seed: sx + 4, seg: 12, bury: 0.4 }), M(sx * hs, -0.2, 0), { noAO: true, tint: snowTint(sx) });
+      if (lod < 2) B.add('snow', snowDrift([[0, 0, 3.6, depth * 0.5 + 2.4, 0.95], [sx * 1.6, 2.4, 2.4, 2.0, 0.6, 0.4], [-sx * 1.2, -2.6, 2.2, 1.8, 0.5]], { seed: sx + 4, cell: 0.7, bury: 1.8 }), M(sx * hs, -0.25, 0), { noAO: true, tint: snowTint(sx) });
       if (lod === 0) // X bracing between the two legs of a portal
         B.add('metal', strut(V(sx * hs, 1.0, -depth / 2), V(sx * hs, h - 1.4, depth / 2), 0.14, 8)),
         B.add('metal', strut(V(sx * hs, 1.0, depth / 2), V(sx * hs, h - 1.4, -depth / 2), 0.14, 8));
@@ -97,7 +118,30 @@ export function pipeGantry({ span = 30, h = 11, depth = 7 }) {
 }
 
 /** collapsed arcade wall: pilasters, arch with voussoir ring, banded courses, broken crown and rubble */
-export function ruinWall({ w = 16, h = 9, t = 2.4, seed = 1 }) {
+export function ruinWall(o = {}) {
+  return ASSETS.structs?.ruin0 ? ruinWallAsset(o) : ruinWallProc(o);
+}
+
+// Blender ruin modules (tools/gen_structures.py): 3 variants with individually cut voussoirs, broken crown, rebar stubs and rubble.
+function ruinWallAsset({ w = 16, h = 9, t = 2.4, seed = 1 }) {
+  return (lod, B, col) => {
+    const ax = w * 0.19;
+    addStruct(B, 'ruin' + (((seed % 3) + 3) % 3), lod, M(0, 0, 0, 0, 0, 0, w / 16, h / 9.6, 1));
+    if (lod < 2) {
+      // drifted snow piled against the pilasters and rubble: separate soft mounds, nothing across the doorway, no straight edges
+      const k = w / 16;
+      B.add('snow', snowDrift([
+        [-w * 0.36, 0.7, 3.8 * k, 3.6, 1.15, 0.2], [w * 0.37, -0.5, 4.0 * k, 3.4, 1.25, -0.25],
+        [-w * 0.3, 3.5, 3.4 * k, 2.0, 0.6, 0.5], [w * 0.25, -3.2, 3.6 * k, 1.8, 0.55, -0.4],
+        [w * 0.5, 2.6, 2.4 * k, 2.2, 0.7], [-w * 0.5, -2.0, 2.6 * k, 2.0, 0.75],
+      ], { seed: seed + 1, cell: lod === 0 ? 0.5 : 0.8, bury: 2.6 }), M(0, -0.22, 0), { noAO: true, tint: snowTint(seed + 1) });
+    }
+    col(-w / 2, -1, -t / 2, -ax - 1.4, h * 0.7, t / 2);
+    col(ax + 1.4, -1, -t / 2, w / 2, h * 0.7, t / 2);
+  };
+}
+
+function ruinWallProc({ w = 16, h = 9, t = 2.4, seed = 1 }) {
   return (lod, B, col) => {
     const r = rng(seed * 13 + 1);
     const s = new THREE.Shape();
@@ -132,7 +176,7 @@ export function ruinWall({ w = 16, h = 9, t = 2.4, seed = 1 }) {
         B.add('wall', rbox(sz * 1.6, sz, sz * 1.2, 0.15, 2), M((rr() - 0.5) * w * 1.4, sz * 0.3, (rr() > 0.5 ? 1 : -1) * (t / 2 + 0.6 + rr() * 2), 0, rr() * 3, rr() * 0.4));
       }
       B.add('snow', snowPillow(w * 0.55, t * 1.7, 0.8, { seed, seg: 12, bury: 0.5 }), M(w * 0.2 - 0.0, h * 0.78, 0), { noAO: true, tint: snowTint(seed) });
-      B.add('snow', snowPillow(w * 1.7, t * 5.4, 1.5, { seed: seed + 1, seg: 16, bury: 1.0 }), M(0, -0.3, 0), { noAO: true, tint: snowTint(seed + 1) });
+      B.add('snow', snowDrift([[-w * 0.36, 0.7, w * 0.24, 3.6, 1.15, 0.2], [w * 0.37, -0.5, w * 0.25, 3.4, 1.25, -0.25], [-w * 0.3, 3.5, w * 0.21, 2.0, 0.6, 0.5], [w * 0.25, -3.2, w * 0.22, 1.8, 0.55, -0.4]], { seed: seed + 1, cell: 0.6, bury: 2.6 }), M(0, -0.22, 0), { noAO: true, tint: snowTint(seed + 1) });
     }
     col(-w / 2, -1, -t / 2, -ax - 1.4, h * 0.7, t / 2);
     col(ax + 1.4, -1, -t / 2, w / 2, h * 0.7, t / 2);
@@ -140,7 +184,34 @@ export function ruinWall({ w = 16, h = 9, t = 2.4, seed = 1 }) {
 }
 
 /** Factory gate: sealed hangar door framed by pilasters, slit windows and heavy wings. End of the built section. */
-export function factoryGate({ span = 112 }) {
+export function factoryGate(opts = {}) {
+  return ASSETS.structs?.gate ? factoryGateAsset(opts) : factoryGateProc(opts);
+}
+
+function gateWings(span, W, lod, B, col) {
+  for (const sx of [-1, 1]) {
+    const F = frame(B, col, sx * (W / 2 + (span - W) / 4), 0, 0, 0);
+    building({ seed: 11 + sx, roof: 'vents', tiers: [
+      { w: (span - W) / 2, d: 26, h: 24, blank: 0.4, bay: 5.2, accent: [{ face: 'z+', x: -(span - W) / 8, w: 5 }, { face: 'z+', x: (span - W) / 8, w: 5 }] },
+    ] })(lod, F.B, F.col);
+  }
+}
+
+// Blender-modelled hangar gate (tools/gen_structures.py): layered arched frame with orange outline, sealed shutter leaves with raised panels,
+// lintel housing with louvres, pilasters + orange slab stacks, slit windows, corbelled crown, roof masts. Collision as the procedural version.
+function factoryGateAsset({ span = 112 }) {
+  return (lod, B, col) => {
+    const W = 46, Hh = 34, D = 9, dw = 11.5;
+    addStruct(B, 'gate', lod, M(0, 0, 0));
+    if (lod < 2) B.add('snow', topSnow(W - 2.5, D - 2.4, 1.2, 8, { cell: 0.7 }), M(0, Hh + 1.45, 0), { noAO: true, tint: snowTint(1) });
+    col(-W / 2, -1, -D / 2, -dw, Hh, D / 2);
+    col(dw, -1, -D / 2, W / 2, Hh, D / 2);
+    col(-dw, -1, -D / 2, dw, Hh, -D / 2 + 3);
+    gateWings(span, W, lod, B, col);
+  };
+}
+
+function factoryGateProc({ span = 112 }) {
   return (lod, B, col) => {
     const W = 46, Hh = 34, D = 9, dw = 11.5, dh = 17.5;
     const door = new THREE.Path();
@@ -192,7 +263,7 @@ export function factoryGate({ span = 112 }) {
       B.add('wallLight', rbox(W - 0.4, 1.4, 1.0, 0.3, 2), M(0, Hh + 0.7, -D / 2 + 0.9));
       for (const sx of [-1, 1]) for (let k = 0; k < 3; k++) B.add('accent', rbox(2.6, 4.4, 0.7, 0.2, 3), M(sx * (dw + 8.6 + k * 0), 3.4 + k * 5.4, D / 2 + 0.85));
     }
-    if (lod < 2) B.add('snow', snowPillow(W - 2.5, D - 2.4, 1.1, { seed: 8, seg: 20, bury: 0.6 }), M(0, Hh + 0.0, 0), { noAO: true, tint: snowTint(1) });
+    if (lod < 2) B.add('snow', topSnow(W - 2.5, D - 2.4, 1.2, 8, { cell: 0.7 }), M(0, Hh + 0.0, 0), { noAO: true, tint: snowTint(1) });
     col(-W / 2, -1, -D / 2, -dw, Hh, D / 2);
     col(dw, -1, -D / 2, W / 2, Hh, D / 2);
     col(-dw, -1, -D / 2, dw, Hh, -D / 2 + 3);
@@ -206,7 +277,33 @@ export function factoryGate({ span = 112 }) {
 }
 
 /** Walk-through transit hall: openings at both ends (±x), interior pillars, roof ribs, glowing ceiling strips. */
-export function transitHall({ L = 34, Wd = 20, H = 9.5, seed = 1 }) {
+export function transitHall(o = {}) {
+  const { L = 34, Wd = 20, H = 9.5 } = o;
+  return ASSETS.structs?.hall && L === 34 && Wd === 20 && H === 9.5 ? transitHallAsset(o) : transitHallProc(o);
+}
+
+// Blender hall (tools/gen_structures.py): slit-window walls with frames and pilasters, arched end openings with stepped surrounds and orange
+// panels, fluted pillars, arched roof ribs, glow strips. Collision identical to the procedural version.
+function transitHallAsset({ L = 34, Wd = 20, H = 9.5, seed = 1 }) {
+  return (lod, B, col) => {
+    const hw = Wd / 2, T = 1.5;
+    addStruct(B, 'hall', lod, M(0, 0, 0));
+    col(-L / 2 - 1, -1.5, -hw - 1, L / 2 + 1, 0.5, hw + 1);
+    if (lod < 2) for (const sx of [-1, 1]) col(sx * L / 2 + (sx > 0 ? 1.0 : -2.4), -1, -6.2, sx * L / 2 + (sx > 0 ? 2.4 : -1.0), 0.26, 6.2);
+    for (const sz of [-1, 1]) col(-L / 2, -1, sz > 0 ? hw - T : -hw, L / 2, H, sz > 0 ? hw : -hw + T);
+    const dw = 5.2;
+    for (const sx of [-1, 1]) {
+      col(sx * L / 2 - (sx > 0 ? T : 0), -1, -hw, sx * L / 2 + (sx > 0 ? 0 : T), H, -dw - 0.8);
+      col(sx * L / 2 - (sx > 0 ? T : 0), -1, dw + 0.8, sx * L / 2 + (sx > 0 ? 0 : T), H, hw);
+    }
+    if (lod < 2) {
+      B.add('snow', topSnow(L - 1.5, Wd - 1.5, 1.1, seed, { cell: 0.7 }), M(0, H + 1.0, 0), { noAO: true, tint: snowTint(seed) });
+      for (let x = -L / 2 + 6; x < L / 2 - 3; x += 6) for (const sz of [-1, 1]) col(x - 0.9, 0, sz * 4.6 - 0.9, x + 0.9, H, sz * 4.6 + 0.9);
+    }
+  };
+}
+
+function transitHallProc({ L = 34, Wd = 20, H = 9.5, seed = 1 }) {
   return (lod, B, col) => {
     const hw = Wd / 2, T = 1.5;
     // floor
@@ -275,7 +372,7 @@ export function transitHall({ L = 34, Wd = 20, H = 9.5, seed = 1 }) {
         band.moveTo(-hw + T, 0); band.lineTo(-hw + T, 1.0); band.quadraticCurveTo(0, 3.4, hw - T, 1.0); band.lineTo(hw - T, 0); band.quadraticCurveTo(0, 2.1, -hw + T, 0);
         B.add('wall', extrude(band, 0.8, 0.1, lod === 0 ? 10 : 4, 1, false), M(x, H - 1.2, 0, 0, Math.PI / 2, 0).multiply(new THREE.Matrix4().makeTranslation(0, 0, -0.4)));
       }
-      B.add('snow', snowPillow(L - 1.5, Wd - 1.5, 1.0, { seed, seg: 24, bury: 0.8 }), M(0, H + 1.0, 0), { noAO: true, tint: snowTint(seed) });
+      B.add('snow', topSnow(L - 1.5, Wd - 1.5, 1.1, seed, { cell: 0.7 }), M(0, H + 1.0, 0), { noAO: true, tint: snowTint(seed) });
       // ceiling light strips + interior pillars
       for (const sz of [-1, 1]) B.add('glow', rbox(L - 4, 0.22, 0.5, 0.08, 1), M(0, H - 0.5, sz * 3.2));
       for (let x = -L / 2 + 6; x < L / 2 - 3; x += 6)

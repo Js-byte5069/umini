@@ -1,16 +1,1119 @@
 {
  "buildings": [
   {
+   "id": 0,
    "x": -35,
    "z": 112,
    "door": "x+",
-   "roof": "tank",
+   "roof": [
+    "tank"
+   ],
    "seed": 4,
+   "canopy": false,
    "tiers": [
     {
      "w": 32,
      "d": 30,
      "h": 28,
+     "shape": "chamfer",
+     "ch": 3.4,
+     "taper": 0.04,
+     "buttress": 3,
+     "accent": [
+      {
+       "face": "x+",
+       "x": -9.5,
+       "w": 5.4
+      },
+      {
+       "face": "x+",
+       "x": 9.5,
+       "w": 5.4
+      },
+      {
+       "face": "z+",
+       "x": 7,
+       "w": 5.5
+      }
+     ],
+     "gallery": [
+      {
+       "face": "z+",
+       "x": -6,
+       "y": 14,
+       "len": 12
+      }
+     ],
+     "pipes": 2
+    },
+    {
+     "w": 22,
+     "d": 20,
+     "h": 18,
+     "ox": -5,
+     "shape": "chamfer",
+     "ch": 2.4,
+     "taper": 0.05,
+     "windows": 0.15,
+     "accent": [
+      {
+       "face": "x+",
+       "x": 0,
+       "w": 6
+      }
+     ],
+     "gallery": [
+      {
+       "face": "x+",
+       "x": -5,
+       "y": 7,
+       "len": 8
+      }
+     ],
+     "style": "slab",
+     "skin": "wallDark"
+    },
+    {
+     "w": 14,
+     "d": 12,
+     "h": 14,
+     "ox": -9,
+     "oz": 2,
+     "shape": "oct",
+     "taper": 0.06,
+     "rings": [
+      8
+     ],
+     "style": "vertical"
+    }
+   ],
+   "wings": [
+    {
+     "type": "volume",
+     "x": -8,
+     "z": 19.5,
+     "w": 9,
+     "d": 9,
+     "h": 22,
+     "taper": 0.03,
+     "bay": 4.2,
+     "gf": 5.5,
+     "accent": [
+      {
+       "face": "z+",
+       "x": 0,
+       "w": 3.2
+      }
+     ],
+     "style": "vertical"
+    }
+   ]
+  },
+  {
+   "id": 1,
+   "x": 36,
+   "z": 112,
+   "door": "x-",
+   "roof": [
+    "antenna"
+   ],
+   "seed": 7,
+   "canopy": false,
+   "tiers": [
+    {
+     "w": 30,
+     "d": 30,
+     "h": 24,
+     "shape": "chamfer",
+     "ch": 3.0,
+     "taper": 0.03,
+     "buttress": 2,
+     "accent": [
+      {
+       "face": "x-",
+       "x": -8,
+       "w": 5.2
+      },
+      {
+       "face": "z+",
+       "x": -7,
+       "w": 5
+      }
+     ],
+     "gallery": [
+      {
+       "face": "z+",
+       "x": 6,
+       "y": 12,
+       "len": 11
+      }
+     ],
+     "style": "industrial",
+     "pipes": 2
+    },
+    {
+     "w": 28,
+     "d": 26,
+     "h": 22,
+     "ox": -5,
+     "oz": -2,
+     "shape": "chamfer",
+     "ch": 2.0,
+     "taper": 0.06,
+     "accent": [
+      {
+       "face": "x-",
+       "x": 4,
+       "w": 5.6
+      },
+      {
+       "face": "z+",
+       "x": 0,
+       "w": 5.6
+      }
+     ],
+     "style": "slab",
+     "skin": "wallDark"
+    },
+    {
+     "w": 12,
+     "d": 12,
+     "h": 16,
+     "ox": -5,
+     "oz": -2,
+     "shape": "round",
+     "taper": 0.1,
+     "rings": [
+      9
+     ],
+     "style": "vertical"
+    }
+   ],
+   "wings": [
+    {
+     "type": "volume",
+     "x": 9,
+     "z": -20,
+     "w": 8,
+     "d": 9,
+     "h": 30,
+     "taper": 0.04,
+     "bay": 3.8,
+     "gf": 5.5,
+     "accent": [
+      {
+       "face": "z-",
+       "x": 0,
+       "w": 3
+      }
+     ],
+     "style": "vertical"
+    }
+   ]
+  },
+  {
+   "id": 2,
+   "x": -34,
+   "z": 68,
+   "door": "x+",
+   "roof": [
+    "vents"
+   ],
+   "seed": 12,
+   "tiers": [
+    {
+     "w": 30,
+     "d": 28,
+     "h": 18,
+     "windows": 0.06,
+     "bay": 7.0,
+     "gf": 7.5,
+     "grp": 1,
+     "buttress": 4,
+     "accent": [
+      {
+       "face": "x+",
+       "x": -9,
+       "w": 5.4
+      },
+      {
+       "face": "x+",
+       "x": 9,
+       "w": 5.4
+      }
+     ],
+     "gallery": [
+      {
+       "face": "z+",
+       "x": 0,
+       "y": 10,
+       "len": 16
+      }
+     ],
+     "style": "industrial",
+     "arcade": true
+    },
+    {
+     "w": 16,
+     "d": 18,
+     "h": 14,
+     "ox": -6,
+     "oz": -3,
+     "shape": "chamfer",
+     "ch": 2.5,
+     "taper": 0.05,
+     "accent": [
+      {
+       "face": "x+",
+       "x": 0,
+       "w": 4.6
+      }
+     ]
+    }
+   ],
+   "wings": [
+    {
+     "type": "silo",
+     "x": -10,
+     "z": 19.5,
+     "r": 4.0,
+     "h": 34,
+     "top": "cone"
+    },
+    {
+     "type": "silo",
+     "x": -1,
+     "z": 21,
+     "r": 3.3,
+     "h": 26,
+     "top": "dome"
+    },
+    {
+     "type": "silo",
+     "x": 7,
+     "z": 19.5,
+     "r": 2.8,
+     "h": 40,
+     "top": "cone"
+    },
+    {
+     "type": "bridge",
+     "from": [
+      -10,
+      22,
+      19.5
+     ],
+     "to": [
+      7,
+      22,
+      19.5
+     ],
+     "w": 2.4,
+     "h": 2.4,
+     "enclosed": false
+    },
+    {
+     "type": "chimney",
+     "x": -17,
+     "z": 8,
+     "r": 1.6,
+     "h": 48
+    }
+   ]
+  },
+  {
+   "id": 3,
+   "x": 37,
+   "z": 64,
+   "door": "x-",
+   "roof": [
+    "ring"
+   ],
+   "seed": 15,
+   "tiers": [
+    {
+     "w": 30,
+     "d": 26,
+     "h": 16,
+     "shape": "chamfer",
+     "ch": 2.4,
+     "buttress": 3,
+     "accent": [
+      {
+       "face": "x-",
+       "x": -9,
+       "w": 5.4
+      },
+      {
+       "face": "x-",
+       "x": 9,
+       "w": 5.4
+      }
+     ]
+    },
+    {
+     "w": 18,
+     "d": 20,
+     "h": 44,
+     "ox": 6,
+     "shape": "chamfer",
+     "ch": 2.2,
+     "taper": 0.07,
+     "accent": [
+      {
+       "face": "x-",
+       "x": -4.5,
+       "w": 5.8
+      },
+      {
+       "face": "x-",
+       "x": 4.5,
+       "w": 5.8
+      },
+      {
+       "face": "z+",
+       "x": 0,
+       "w": 6
+      }
+     ],
+     "style": "slab",
+     "skin": "wallDark"
+    },
+    {
+     "w": 11,
+     "d": 13,
+     "h": 14,
+     "ox": 9.5,
+     "shape": "oct",
+     "taper": 0.08,
+     "rings": [
+      7
+     ],
+     "style": "vertical"
+    }
+   ],
+   "wings": []
+  },
+  {
+   "id": 4,
+   "x": -76,
+   "z": 96,
+   "roof": [
+    "antenna"
+   ],
+   "seed": 21,
+   "tiers": [
+    {
+     "w": 28,
+     "d": 26,
+     "h": 30,
+     "shape": "chamfer",
+     "ch": 4.0,
+     "taper": 0.04,
+     "accent": [
+      {
+       "face": "z+",
+       "x": -6,
+       "w": 4.6
+      },
+      {
+       "face": "x+",
+       "x": 0,
+       "w": 5
+      }
+     ],
+     "style": "vertical",
+     "pipes": 2
+    },
+    {
+     "w": 20,
+     "d": 18,
+     "h": 26,
+     "shape": "oct",
+     "taper": 0.08,
+     "ox": 1,
+     "rings": [
+      10
+     ],
+     "style": "slab",
+     "skin": "wallDark"
+    },
+    {
+     "w": 12,
+     "d": 12,
+     "h": 24,
+     "shape": "round",
+     "taper": 0.15,
+     "ox": 1,
+     "rings": [
+      12
+     ],
+     "style": "vertical"
+    }
+   ],
+   "wings": [
+    {
+     "type": "volume",
+     "x": 16.5,
+     "z": 2,
+     "y": 15,
+     "w": 12,
+     "d": 11,
+     "h": 11,
+     "shape": "chamfer",
+     "ch": 1.6,
+     "style": "industrial",
+     "legs": [
+      [
+       4.0,
+       -3.6
+      ],
+      [
+       4.0,
+       3.6
+      ]
+     ]
+    }
+   ]
+  },
+  {
+   "id": 5,
+   "x": 78,
+   "z": 88,
+   "roof": [
+    "dish"
+   ],
+   "seed": 23,
+   "tiers": [
+    {
+     "w": 28,
+     "d": 28,
+     "h": 18,
+     "shape": "oct",
+     "taper": 0.03,
+     "rings": [
+      9
+     ]
+    },
+    {
+     "w": 22,
+     "d": 22,
+     "h": 22,
+     "shape": "round",
+     "taper": 0.06,
+     "rings": [
+      8,
+      16
+     ],
+     "abands": [
+      [
+       10,
+       3
+      ]
+     ]
+    },
+    {
+     "w": 14,
+     "d": 14,
+     "h": 16,
+     "shape": "round",
+     "taper": 0.1,
+     "rings": [
+      8
+     ],
+     "abands": [
+      [
+       3,
+       2.6
+      ]
+     ]
+    }
+   ],
+   "wings": [
+    {
+     "type": "chimney",
+     "x": 12,
+     "z": 12,
+     "r": 1.4,
+     "h": 40
+    }
+   ]
+  },
+  {
+   "id": 6,
+   "x": -40,
+   "z": 30,
+   "door": "x+",
+   "door_style": "portal",
+   "roof": [
+    "vents"
+   ],
+   "seed": 31,
+   "tiers": [
+    {
+     "w": 28,
+     "d": 26,
+     "h": 20,
+     "bay": 7.0,
+     "windows": 0.1,
+     "accent": [
+      {
+       "face": "x+",
+       "x": -9.5,
+       "w": 4.6
+      },
+      {
+       "face": "x+",
+       "x": 9.5,
+       "w": 4.6
+      }
+     ],
+     "arcade": true
+    },
+    {
+     "w": 18,
+     "d": 18,
+     "h": 10,
+     "ox": -3,
+     "shape": "chamfer",
+     "ch": 2.2,
+     "taper": 0.05
+    }
+   ],
+   "wings": [
+    {
+     "type": "volume",
+     "x": 17.0,
+     "z": -17,
+     "w": 8,
+     "d": 9,
+     "h": 30,
+     "taper": 0.05,
+     "style": "vertical",
+     "accent": [
+      {
+       "face": "x+",
+       "x": 0,
+       "w": 3.2
+      }
+     ],
+     "pipes": 1
+    },
+    {
+     "type": "volume",
+     "x": 17.0,
+     "z": 17,
+     "w": 8,
+     "d": 9,
+     "h": 26,
+     "taper": 0.05,
+     "style": "vertical",
+     "accent": [
+      {
+       "face": "x+",
+       "x": 0,
+       "w": 3.2
+      }
+     ]
+    },
+    {
+     "type": "bridge",
+     "from": [
+      17.0,
+      23,
+      -12.5
+     ],
+     "to": [
+      17.0,
+      23,
+      12.5
+     ],
+     "w": 4.4,
+     "h": 3.4
+    }
+   ]
+  },
+  {
+   "id": 7,
+   "x": 42,
+   "z": 24,
+   "door": "x-",
+   "roof": [
+    "stack"
+   ],
+   "seed": 33,
+   "tiers": [
+    {
+     "w": 28,
+     "d": 24,
+     "h": 20,
+     "bay": 7.0,
+     "gf": 7.5,
+     "grp": 1,
+     "accent": [
+      {
+       "face": "x-",
+       "x": -9,
+       "w": 5
+      },
+      {
+       "face": "z+",
+       "x": 6,
+       "w": 4
+      }
+     ],
+     "style": "industrial",
+     "pipes": 1
+    },
+    {
+     "w": 18,
+     "d": 16,
+     "h": 12,
+     "ox": 3,
+     "shape": "chamfer",
+     "ch": 2.0,
+     "taper": 0.05
+    }
+   ],
+   "wings": [
+    {
+     "type": "silo",
+     "x": -17,
+     "z": -9,
+     "r": 3.6,
+     "h": 32,
+     "top": "dome"
+    },
+    {
+     "type": "silo",
+     "x": -17,
+     "z": 9.5,
+     "r": 3.2,
+     "h": 26,
+     "top": "cone"
+    },
+    {
+     "type": "silo",
+     "x": -20,
+     "z": 17,
+     "r": 2.8,
+     "h": 38,
+     "top": "cone"
+    },
+    {
+     "type": "bridge",
+     "from": [
+      -17,
+      20,
+      -9
+     ],
+     "to": [
+      -17,
+      20,
+      9.5
+     ],
+     "w": 2.6,
+     "h": 2.4,
+     "enclosed": false
+    }
+   ]
+  },
+  {
+   "id": 8,
+   "x": -136,
+   "z": 70,
+   "roof": [
+    "dish"
+   ],
+   "seed": 41,
+   "tiers": [
+    {
+     "w": 30,
+     "d": 30,
+     "h": 40,
+     "shape": "chamfer",
+     "ch": 3.6,
+     "taper": 0.05,
+     "accent": [
+      {
+       "face": "z+",
+       "x": 0,
+       "w": 5.8
+      },
+      {
+       "face": "x+",
+       "x": 8,
+       "w": 5
+      }
+     ],
+     "style": "slab",
+     "pipes": 2,
+     "skin": "wallDark"
+    },
+    {
+     "w": 20,
+     "d": 20,
+     "h": 24,
+     "ox": -3,
+     "shape": "oct",
+     "taper": 0.07,
+     "rings": [
+      10
+     ],
+     "style": "vertical"
+    },
+    {
+     "w": 12,
+     "d": 12,
+     "h": 14,
+     "ox": -3,
+     "shape": "round",
+     "taper": 0.08
+    }
+   ],
+   "wings": [
+    {
+     "type": "volume",
+     "x": 6,
+     "z": -31,
+     "w": 14,
+     "d": 14,
+     "h": 62,
+     "shape": "chamfer",
+     "ch": 2.4,
+     "taper": 0.08,
+     "accent": [
+      {
+       "face": "x+",
+       "x": 0,
+       "w": 5
+      },
+      {
+       "face": "z+",
+       "x": 0,
+       "w": 5
+      }
+     ],
+     "style": "vertical"
+    },
+    {
+     "type": "bridge",
+     "from": [
+      6,
+      36,
+      -15
+     ],
+     "to": [
+      6,
+      36,
+      -24
+     ],
+     "w": 4.2,
+     "h": 3.4
+    }
+   ]
+  },
+  {
+   "id": 9,
+   "x": 124,
+   "z": 56,
+   "roof": [
+    "dish"
+   ],
+   "seed": 43,
+   "tiers": [
+    {
+     "w": 32,
+     "d": 26,
+     "h": 14,
+     "shape": "chamfer",
+     "ch": 2.6,
+     "accent": [
+      {
+       "face": "x-",
+       "x": -8,
+       "w": 5
+      },
+      {
+       "face": "x-",
+       "x": 8,
+       "w": 5
+      }
+     ],
+     "gallery": [
+      {
+       "face": "x-",
+       "x": 0,
+       "y": 7,
+       "len": 16
+      }
+     ]
+    },
+    {
+     "w": 26,
+     "d": 22,
+     "h": 12,
+     "ox": 2,
+     "shape": "chamfer",
+     "ch": 2.2,
+     "taper": 0.03,
+     "gallery": [
+      {
+       "face": "x-",
+       "x": 0,
+       "y": 6,
+       "len": 12
+      }
+     ],
+     "style": "slab"
+    },
+    {
+     "w": 20,
+     "d": 18,
+     "h": 10,
+     "ox": 4,
+     "shape": "chamfer",
+     "ch": 2.0,
+     "taper": 0.03,
+     "accent": [
+      {
+       "face": "x-",
+       "x": 0,
+       "w": 5.4
+      }
+     ],
+     "style": "vertical"
+    },
+    {
+     "w": 14,
+     "d": 12,
+     "h": 9,
+     "ox": 6,
+     "shape": "oct",
+     "taper": 0.04,
+     "skin": "wallDark"
+    },
+    {
+     "w": 8,
+     "d": 8,
+     "h": 15,
+     "ox": 8,
+     "shape": "round",
+     "taper": 0.1
+    }
+   ],
+   "wings": [
+    {
+     "type": "volume",
+     "x": -23.5,
+     "z": 20,
+     "w": 12,
+     "d": 12,
+     "h": 44,
+     "shape": "chamfer",
+     "ch": 2.4,
+     "taper": 0.07,
+     "style": "vertical",
+     "accent": [
+      {
+       "face": "x-",
+       "x": 0,
+       "w": 4.6
+      }
+     ]
+    },
+    {
+     "type": "bridge",
+     "from": [
+      -16,
+      20,
+      8
+     ],
+     "to": [
+      -19.0,
+      20,
+      15
+     ],
+     "w": 3.6,
+     "h": 3.0
+    }
+   ]
+  },
+  {
+   "id": 10,
+   "x": -108,
+   "z": 100,
+   "roof": [
+    "ring"
+   ],
+   "ring_r": 6.2,
+   "seed": 51,
+   "tiers": [
+    {
+     "w": 26,
+     "d": 24,
+     "h": 14,
+     "shape": "oct",
+     "taper": 0.02,
+     "arcade": true,
+     "rings": [
+      7
+     ],
+     "accent": [
+      {
+       "face": "x+",
+       "x": 0,
+       "w": 4.4
+      },
+      {
+       "face": "z+",
+       "x": 0,
+       "w": 4.4
+      }
+     ]
+    },
+    {
+     "w": 20,
+     "d": 20,
+     "h": 24,
+     "shape": "round",
+     "taper": 0.05,
+     "rings": [
+      8,
+      16
+     ],
+     "abands": [
+      [
+       11,
+       2.6
+      ]
+     ]
+    },
+    {
+     "w": 12,
+     "d": 12,
+     "h": 16,
+     "shape": "round",
+     "taper": 0.1,
+     "rings": [
+      8
+     ]
+    }
+   ],
+   "wings": [
+    {
+     "type": "chimney",
+     "x": 14,
+     "z": 10,
+     "r": 1.3,
+     "h": 38
+    },
+    {
+     "type": "chimney",
+     "x": 15,
+     "z": -5,
+     "r": 1.0,
+     "h": 30
+    }
+   ]
+  },
+  {
+   "id": 11,
+   "x": 72,
+   "z": 145,
+   "door": "x-",
+   "roof": [
+    "antenna"
+   ],
+   "seed": 55,
+   "tiers": [
+    {
+     "w": 26,
+     "d": 30,
+     "h": 22,
+     "shape": "chamfer",
+     "ch": 3,
+     "taper": 0.04,
+     "style": "industrial",
+     "buttress": 2,
+     "pipes": 1,
+     "accent": [
+      {
+       "face": "x-",
+       "x": -8,
+       "w": 5
+      },
+      {
+       "face": "x-",
+       "x": 8,
+       "w": 5
+      }
+     ]
+    },
+    {
+     "w": 18,
+     "d": 20,
+     "h": 26,
+     "ox": 4,
+     "shape": "chamfer",
+     "ch": 2,
+     "style": "slab",
+     "taper": 0.06,
+     "accent": [
+      {
+       "face": "x-",
+       "x": 0,
+       "w": 6.2
+      },
+      {
+       "face": "z+",
+       "x": 0,
+       "w": 5
+      }
+     ],
+     "skin": "wallDark"
+    }
+   ],
+   "wings": [
+    {
+     "type": "volume",
+     "x": -14,
+     "z": 0,
+     "y": 16,
+     "w": 12,
+     "d": 12,
+     "h": 9,
+     "shape": "chamfer",
+     "ch": 1.4,
+     "style": "industrial",
+     "legs": [
+      [
+       -4.5,
+       -4.5
+      ],
+      [
+       -4.5,
+       4.5
+      ]
+     ]
+    }
+   ]
+  },
+  {
+   "id": 12,
+   "x": -72,
+   "z": 146,
+   "door": "x+",
+   "roof": [
+    "dish"
+   ],
+   "seed": 61,
+   "tiers": [
+    {
+     "w": 24,
+     "d": 22,
+     "h": 16,
+     "arcade": true,
      "accent": [
       {
        "face": "x+",
@@ -21,335 +1124,186 @@
        "face": "x+",
        "x": 7,
        "w": 4.4
-      },
+      }
+     ],
+     "gallery": [
       {
        "face": "z+",
        "x": 0,
-       "w": 5
+       "y": 8,
+       "len": 14
       }
      ]
     },
     {
-     "w": 24,
-     "d": 22,
-     "h": 18,
-     "ox": -2,
-     "accent": [
-      {
-       "face": "x+",
-       "x": 0,
-       "w": 5.4
-      }
-     ]
-    },
-    {
-     "w": 15,
+     "w": 14,
      "d": 14,
-     "h": 12,
+     "h": 20,
      "ox": -3,
-     "accent": []
+     "shape": "oct",
+     "taper": 0.07,
+     "rings": [
+      10
+     ]
     }
    ],
-   "id": 0
-  },
-  {
-   "x": 36,
-   "z": 112,
-   "door": "x-",
-   "roof": "antenna",
-   "seed": 7,
-   "tiers": [
+   "wings": [
     {
-     "w": 30,
-     "d": 30,
-     "h": 24,
-     "accent": [
-      {
-       "face": "x-",
-       "x": 0,
-       "w": 5.5
-      },
-      {
-       "face": "z+",
-       "x": -7,
-       "w": 4
-      }
-     ]
+     "type": "mast",
+     "x": 10,
+     "z": -8,
+     "h": 62,
+     "w0": 4.2,
+     "w1": 0.8
     },
     {
-     "w": 20,
-     "d": 22,
-     "h": 20,
-     "ox": 2,
-     "accent": [
-      {
-       "face": "x-",
-       "x": 4,
-       "w": 4.6
-      }
-     ]
+     "type": "chimney",
+     "x": -8,
+     "z": 12,
+     "r": 1.2,
+     "h": 34
     }
-   ],
-   "id": 1
+   ]
   },
   {
-   "x": -34,
-   "z": 68,
-   "door": "x+",
-   "roof": "vents",
-   "seed": 12,
-   "tiers": [
-    {
-     "w": 30,
-     "d": 28,
-     "h": 20,
-     "accent": [
-      {
-       "face": "x+",
-       "x": 0,
-       "w": 5
-      }
-     ]
-    },
-    {
-     "w": 20,
-     "d": 20,
-     "h": 14,
-     "accent": []
-    }
+   "id": 13,
+   "x": -98,
+   "z": 124,
+   "roof": [
+    "dish"
    ],
-   "id": 2
-  },
-  {
-   "x": 37,
-   "z": 64,
-   "door": "x-",
-   "roof": "tank",
-   "seed": 15,
+   "seed": 71,
    "tiers": [
     {
-     "w": 30,
-     "d": 26,
-     "h": 34,
-     "accent": [
-      {
-       "face": "x-",
-       "x": -6,
-       "w": 4.4
-      },
-      {
-       "face": "x-",
-       "x": 6,
-       "w": 4.4
-      },
-      {
-       "face": "z+",
-       "x": 0,
-       "w": 5
-      }
-     ]
-    },
-    {
-     "w": 22,
-     "d": 18,
-     "h": 18,
-     "ox": 2,
-     "accent": [
-      {
-       "face": "x-",
-       "x": 0,
-       "w": 5.2
-      }
-     ]
-    }
-   ],
-   "id": 3
-  },
-  {
-   "x": -76,
-   "z": 96,
-   "roof": "antenna",
-   "seed": 21,
-   "tiers": [
-    {
-     "w": 28,
-     "d": 26,
-     "h": 44,
-     "accent": [
-      {
-       "face": "z+",
-       "x": -6,
-       "w": 4.4
-      },
-      {
-       "face": "x+",
-       "x": 0,
-       "w": 5
-      }
-     ]
-    },
-    {
-     "w": 20,
-     "d": 18,
-     "h": 22,
-     "ox": 2,
-     "accent": [
-      {
-       "face": "z+",
-       "x": 0,
-       "w": 4.4
-      }
-     ]
-    }
-   ],
-   "id": 4
-  },
-  {
-   "x": 78,
-   "z": 88,
-   "roof": "vents",
-   "seed": 23,
-   "tiers": [
-    {
-     "w": 28,
-     "d": 28,
-     "h": 38,
-     "accent": [
-      {
-       "face": "z+",
-       "x": 6,
-       "w": 4.4
-      },
-      {
-       "face": "x-",
-       "x": 0,
-       "w": 5
-      }
-     ]
-    },
-    {
-     "w": 18,
-     "d": 18,
-     "h": 18,
-     "accent": []
-    }
-   ],
-   "id": 5
-  },
-  {
-   "x": -40,
-   "z": 30,
-   "door": "x+",
-   "roof": "vents",
-   "seed": 31,
-   "tiers": [
-    {
-     "w": 28,
-     "d": 26,
-     "h": 20,
-     "accent": [
-      {
-       "face": "x+",
-       "x": 0,
-       "w": 5
-      }
-     ]
-    },
-    {
-     "w": 18,
-     "d": 18,
-     "h": 10,
-     "accent": []
-    }
-   ],
-   "id": 6
-  },
-  {
-   "x": 42,
-   "z": 24,
-   "door": "x-",
-   "roof": "tank",
-   "seed": 33,
-   "tiers": [
-    {
-     "w": 28,
-     "d": 24,
-     "h": 24,
-     "accent": [
-      {
-       "face": "x-",
-       "x": 0,
-       "w": 5
-      },
-      {
-       "face": "z+",
-       "x": 6,
-       "w": 4
-      }
-     ]
-    },
-    {
-     "w": 18,
-     "d": 16,
-     "h": 12,
-     "accent": []
-    }
-   ],
-   "id": 7
-  },
-  {
-   "x": -136,
-   "z": 70,
-   "roof": "tank",
-   "seed": 41,
-   "tiers": [
-    {
-     "w": 30,
-     "d": 30,
+     "w": 12,
+     "d": 14,
      "h": 48,
+     "shape": "chamfer",
+     "ch": 1.8,
+     "taper": 0.06,
+     "style": "vertical",
+     "skin": "wallDark",
+     "pipes": 1,
      "accent": [
+      {
+       "face": "x+",
+       "x": 0,
+       "w": 4.4
+      },
       {
        "face": "z+",
        "x": 0,
-       "w": 5.4
+       "w": 4.4
+      }
+     ]
+    }
+   ],
+   "wings": [
+    {
+     "type": "volume",
+     "x": 36,
+     "z": 0,
+     "w": 12,
+     "d": 14,
+     "h": 52,
+     "shape": "chamfer",
+     "ch": 1.8,
+     "taper": 0.06,
+     "style": "vertical",
+     "skin": "wallDark",
+     "accent": [
+      {
+       "face": "x-",
+       "x": 0,
+       "w": 4.4
       }
      ]
     },
     {
-     "w": 20,
-     "d": 20,
-     "h": 22,
-     "accent": []
+     "type": "arch",
+     "x": 18,
+     "y": 22,
+     "z": 0,
+     "r": 12,
+     "thick": 3.4,
+     "depth": 10
+    },
+    {
+     "type": "bridge",
+     "from": [
+      6,
+      38.4,
+      0
+     ],
+     "to": [
+      30,
+      38.4,
+      0
+     ],
+     "w": 8.4,
+     "h": 4.4,
+     "truss": false
     }
-   ],
-   "id": 8
+   ]
   },
   {
-   "x": 124,
-   "z": 56,
-   "roof": "antenna",
-   "seed": 43,
+   "id": 14,
+   "x": 114,
+   "z": 146,
+   "roof": [],
+   "seed": 77,
    "tiers": [
     {
-     "w": 32,
-     "d": 26,
-     "h": 40,
+     "w": 36,
+     "d": 36,
+     "h": 9,
+     "shape": "round",
+     "rings": []
+    }
+   ],
+   "wings": [
+    {
+     "type": "dome",
+     "x": 0,
+     "z": 0,
+     "y": 9,
+     "r": 16.4,
+     "h": 15,
+     "ribs": 24
+    },
+    {
+     "type": "volume",
+     "x": -21,
+     "z": 0,
+     "w": 10,
+     "d": 14,
+     "h": 11,
+     "shape": "chamfer",
+     "ch": 2.0,
+     "style": "slab",
      "accent": [
       {
-       "face": "z+",
+       "face": "x-",
        "x": 0,
-       "w": 5.4
+       "w": 4.4
       }
      ]
     },
     {
-     "w": 22,
-     "d": 18,
-     "h": 20,
-     "accent": []
+     "type": "chimney",
+     "x": 19,
+     "z": 10,
+     "r": 1.4,
+     "h": 30
+    },
+    {
+     "type": "chimney",
+     "x": 21,
+     "z": -4,
+     "r": 1.1,
+     "h": 24
     }
-   ],
-   "id": 9
+   ]
   }
  ]
 }
