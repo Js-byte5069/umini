@@ -98,7 +98,7 @@ export async function buildWorld(scene, onProgress = () => {}) {
         const sx = -66;
         if (sx > a && sx < b) gaps.push({ side: 1, x0: sx - 2.2 - cx, x1: sx + 2.2 - cx });
         put(makeStructure((lod, B, col) => {
-          viaduct({ x0: -L / 2, x1: L / 2, deckY: DECK, span: SPAN, endPier: i === nseg - 1, gaps, ground: (lx) => ground(cx + lx, Z) })(lod, B, col);
+          viaduct({ x0: -L / 2, x1: L / 2, deckY: DECK, span: SPAN, endPier: i === nseg - 1, gaps, ground: (lx, lz = 0) => ground(cx + lx, Z + lz) })(lod, B, col);
         }, { x: cx, y: 0, z: Z, lods: [0, 90, 260, 700] }));
       });
     }

@@ -290,8 +290,8 @@ class Merge {
 // and its normals / colours are blended into the terrain's own, so the bank melts into the snow field instead of reading as a pasted polygon.
 function driftGeo(hAt, wx, wz, rx, rz, h, seed, ox, oy, oz, lee, rings = 7, segs = 28, rot = 0) {
   const R = 1.5;
-  const P = [], I = [], W = [], M = [];
-  const addV = (x, z, dy, m) => { const y = hAt(x, z) + dy; P.push(x - ox, y - oy, z - oz); W.push(x, z, y); M.push(m); };
+  const P = [], I = [], W = [], M = [], G = [];
+  const addV = (x, z, dy, m) => { const g = hAt(x, z), y = g + dy; P.push(x - ox, y - oy, z - oz); W.push(x, z, y); M.push(m); G.push(g); };
   addV(wx, wz, h * 0.9, 1);
   for (let ri = 1; ri <= rings; ri++) {
     const t = ri / rings;
@@ -319,9 +319,30 @@ function driftGeo(hAt, wx, wz, rx, rz, h, seed, ox, oy, oz, lee, rings = 7, segs
   // blend toward the terrain's own normal / colour with distance from the rock
   const nA = g.attributes.normal, n = P.length / 3, col = new Float32Array(n * 3), tmp = new THREE.Color();
   const e = 0.7;
+  const GXs = new Float32Array(n), GZs = new Float32Array(n), bad = new Float32Array(n);
+  // a bank lies on gentle ground only: wherever the ground turns into a wall (or climbs far above the rock's own ground) the rim mask is faded out, looking one
+  // ring / segment around each vertex so the visible contour stops before the foot of the wall (a bank draped up a cliff face is a vertical white streak)
+  const rise = 1.6 + 0.3 * Math.max(rx, rz);
   for (let i = 0; i < n; i++) {
     const x = W[i * 3], z = W[i * 3 + 1];
     const gx = (hAt(x + e, z) - hAt(x - e, z)) / (2 * e), gz = (hAt(x, z + e) - hAt(x, z - e)) / (2 * e);
+    GXs[i] = gx; GZs[i] = gz;
+    bad[i] = Math.max(sstep(0.9, 1.4, Math.hypot(gx, gz)), sstep(rise, rise * 1.5, Math.abs(G[i] - G[0])));
+  }
+  const fade = new Float32Array(n);
+  for (let i = 0; i < n; i++) {
+    let f = bad[i];
+    if (i === 0) { for (let si = 0; si < segs; si++) f = Math.max(f, bad[1 + si]); }
+    else {
+      const ri = Math.floor((i - 1) / segs) + 1, si = (i - 1) % segs, base = 1 + (ri - 1) * segs;
+      f = Math.max(f, bad[base + ((si + 1) % segs)], bad[base + ((si + segs - 1) % segs)], ri === 1 ? bad[0] : bad[i - segs], ri < rings ? bad[i + segs] : 0);
+    }
+    fade[i] = f;
+  }
+  for (let i = 0; i < n; i++) M[i] *= 1 - fade[i];
+  for (let i = 0; i < n; i++) {
+    const x = W[i * 3], z = W[i * 3 + 1];
+    const gx = GXs[i], gz = GZs[i];
     const l = Math.hypot(gx, 1, gz);
     const m = M[i], w = sstep(0.5, 1.0, m);                   // 1 at the rock, 0 exactly at the visible rim (mask 0.5): zero shading seam
     const nx = lerp(-gx / l, nA.getX(i), w), ny = lerp(1 / l, nA.getY(i), w), nz = lerp(-gz / l, nA.getZ(i), w);

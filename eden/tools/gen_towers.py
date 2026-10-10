@@ -25,7 +25,7 @@ from mathutils import Vector, Matrix, noise, bvhtree
 HERE = os.path.dirname(os.path.abspath(__file__))
 ASSETS = os.environ.get('TOWERS_OUT') or os.path.join(HERE, '..', 'assets')
 os.makedirs(ASSETS, exist_ok=True)
-MATS = ['wall', 'wallLight', 'wallDark', 'trim', 'metal', 'accent', 'accentDark', 'glass', 'deck', 'snow']
+MATS = ['wall', 'wallLight', 'wallDark', 'trim', 'metal', 'accent', 'accentDark', 'glass', 'deck', 'snow', 'rockRed', 'rockBlue']
 MI = {m: i for i, m in enumerate(MATS)}
 TAU = math.tau
 
@@ -39,7 +39,7 @@ TOWERS = [
          bridge=dict(local_x=7.8, deck=19.5, wz=112.0, dir=1, end_x=-50.7)),
     dict(id=21, x=90, z=104.2, yaw=-90, H=96, W=32.5, D=30, seed=8, old_d1h=9.36, flank=1,
          tiers=[(0.82, 0.84, 2.4, 0.975, 9.2, 27.4), (0.66, 0.68, 3.4, 0.93, 27.0, 39.0), (0.54, 0.56, 3.0, 0.87, 38.6, 62.0), (0.31, 0.33, 2.4, 0.86, 61.6, 72.0), (0.20, 0.21, 1.8, 0.85, 71.6, 79.0)],
-         gallery=dict(y=31.3, wrap=1, support=0), plat=dict(y=62.3, wrap=3, support=2),
+         gallery=dict(y=31.3, wrap=1, support=0, piers=True), plat=dict(y=62.3, wrap=3, support=2),
          bridge=dict(local_x=7.8, deck=19.5, wz=112.0, dir=-1, end_x=50.7)),
 ]
 BASE_TOP = 9.5
@@ -401,6 +401,32 @@ def rail_loop(F, pts, y, h, lod):
 CUR_LOD = 0
 
 
+def leaning_slab(P, S, cx, cz, w, t, H, lean_deg, face_deg, mat, seed, frac=7.0, y0=-3.2, panel=True, lod=0):
+    """a tall slab leaning AWAY from the tower (like the fallen megastructure slabs of the concept): footprint w x t, rises H, tilts by lean_deg
+    toward the direction face_deg (degrees, 0 = +z), slightly narrower at the top, with a slanted fracture plane for the broken crown.
+    Returns the XZ axis-aligned bound of its base (for the collider) and the crown y."""
+    fa = math.radians(face_deg); lean = math.tan(math.radians(lean_deg)) * (H - y0)
+    ux, uz = math.cos(fa), -math.sin(fa)                     # along the slab width
+    vx, vz = math.sin(fa), math.cos(fa)                      # outward (thickness / lean direction)
+    def loop(hw, ht, off, ys):
+        pts = ((-hw, -ht), (hw, -ht), (hw, ht), (-hw, ht))
+        return [Vector((cx + ux * a + vx * (b + off), ys[k], cz + uz * a + vz * (b + off))) for k, (a, b) in enumerate(pts)]
+    bot = loop(w / 2, t / 2, 0.0, [y0] * 4)
+    top_y = [H - frac * 0.9, H + frac * 0.15, H + frac * 0.55, H - frac * 0.45]            # slanted, broken crown
+    top = loop(w * 0.40, t * 0.42, lean, top_y)
+    P.shell([bot, top], mat)
+    if panel and lod < 2:                                      # one raised coral-grey inlay band on the leaning face
+        for (f0, f1, m2) in ((0.30, 0.62, 'wallDark'),):
+            def lp(f, g, hw_):
+                y = y0 + (H - y0) * f; o = lean * f + t / 2 * (1 - 0.58 * f) + g
+                hw2 = (w / 2) * (1 - 0.8 * f) * hw_
+                return [Vector((cx + ux * a + vx * o, y, cz + uz * a + vz * o)) for a in (-hw2, hw2)]
+            a0, a1 = lp(f0, 0.12, 0.78), lp(f1, 0.12, 0.78); b0, b1 = lp(f0, 0.5, 0.74), lp(f1, 0.5, 0.74)
+            P.shell([a0 + a1[::-1], b0 + b1[::-1]], m2, cap_top=True, cap_bot=True)
+    xs = [p.x for p in bot]; zs = [p.z for p in bot]
+    return (min(xs), max(xs), min(zs), max(zs)), H + frac * 0.55
+
+
 def build_tower(T, lod):
     global CUR_LOD
     CUR_LOD = lod
@@ -546,6 +572,19 @@ def build_tower(T, lod):
         F.box((0, ym, 0), (ln, 0.2, 0.2), 'trim'); F.box((0, ym, 0), (0.2, 0.2, ln * 0.82), 'trim')
     B.cyl((0, H + 0.1, 0), 0.34, 0.9, 'accent', seg=10)
 
+    # ── fallen slabs resting behind the tower: big, tilted, broken-crowned (asymmetry; reads like concept panel 06) ──
+    rs = random.Random(T['seed'] * 13 + 5)
+    sgn = 1 if T['flank'] < 0 else -1                           # the leaning slab stands on the flank WITHOUT the coral flank slab
+    pw2, pd2 = (W + 4.0) / 2, (D + 4.0) / 2
+    for (kx, kz, ww, tt, hh, ln, fa, mm, sf) in (
+            (sgn * (pw2 + 9.5), -(pd2 + 6.0), 12.0, 4.6, 0.46 * H, 8.5, sgn * 62.0 + 180.0, 'wall', 8.0),
+            (-sgn * (pw2 + 7.0), -(pd2 + 11.5), 9.0, 4.0, 0.29 * H, 13.0, -sgn * 40.0 + 180.0, 'wallLight', 6.0)):
+        bnd, cy = leaning_slab(B, S, kx, kz, ww, tt, hh, ln, fa, mm, T['seed'], frac=sf, lod=lod)
+        cols.append([round(bnd[0] - 0.4, 2), -3.2, round(bnd[2] - 0.4, 2), round(bnd[1] + 0.4, 2), round(min(hh * 0.5, 14.0), 2), round(bnd[3] + 0.4, 2)])
+        if lod < 2:
+            snow_pad(S, kx, -1.2, kz, ww * 1.9, tt * 3.4, 2.1 + rs.random() * 0.6, 150 + int(kx), n=7 if lod == 0 else 4, bury=1.4)       # banked foot
+            for (ddx, ddz, rr_) in ((-0.35, 0.55, 2.6), (0.45, -0.3, 2.0)):
+                boulder(F, (kx + ddx * ww, 0.5, kz + ddz * tt * 2.2), rr_, 170 + int(kx), sqz=(1.2, 0.55, 1.0), rot=rs.uniform(0, 3), sub=1, mat='rockRed')
     # ── snow: continuous soft drifts on every ledge, plus chunky rounded banks at the plinth ──
     nb = {0: 52, 1: 28, 2: 18}[lod]
     def ledge(A, Bt, y, th_, seed):
@@ -572,15 +611,15 @@ def build_tower(T, lod):
             rx_, rz_ = sq_pt(pw_ + 1.7, pd_ + 1.7, 5.0, a)
             big = 3.4 + 1.6 * rr.random()
             rot_ = rr.uniform(0, 3.1)
-            top = boulder(F, (rx_, 0.7, rz_), big, 40 + i, sqz=(1.3, 0.5 + 0.12 * rr.random(), 1.05), rot=rot_, sub=2 if lod == 0 else 1)         # lower rock layer
+            top = boulder(F, (rx_, 0.7, rz_), big, 40 + i, sqz=(1.3, 0.5 + 0.12 * rr.random(), 1.05), rot=rot_, sub=2 if lod == 0 else 1, mat='rockRed' if i % 3 != 1 else 'rockBlue')         # lower rock layer
             if i % 2 == 0:                                                                                  # stacked second layer: strata like the reference plinth
                 dx_, dz_ = math.cos(rot_) * big * 0.35, -math.sin(rot_) * big * 0.35
-                top = boulder(F, (rx_ + dx_, top - 0.55, rz_ + dz_), big * 0.62, 130 + i, sqz=(1.25, 0.5, 1.0), rot=rot_ + 0.5, sub=1)
+                top = boulder(F, (rx_ + dx_, top - 0.55, rz_ + dz_), big * 0.62, 130 + i, sqz=(1.25, 0.5, 1.0), rot=rot_ + 0.5, sub=1, mat='rockBlue' if i % 3 != 1 else 'rockRed')
             snow_pad(S, rx_, top - 0.8, rz_, big * 1.75, big * 1.5, 1.9 + 0.5 * rr.random(), 70 + i, n=6 if lod == 0 else 3)
             if lod == 0:
                 ox_, oz_ = sq_pt(pw_ + 1.7 + 3.6, pd_ + 1.7 + 3.6, 5.0, a + 0.12)
                 sm = big * 0.55
-                top2 = boulder(F, (ox_, 0.6, oz_), sm, 90 + i, sqz=(1.2, 0.6, 1.0), rot=rr.uniform(0, 3.1), sub=1)
+                top2 = boulder(F, (ox_, 0.6, oz_), sm, 90 + i, sqz=(1.2, 0.6, 1.0), rot=rr.uniform(0, 3.1), sub=1, mat='rockRed')
                 snow_pad(S, ox_, top2 - 0.45, oz_, sm * 1.7, sm * 1.5, 0.8, 110 + i, n=4)
         for sx in (-1, 1):                                                                                # fat soft snow lumps at the front corners (street side stays rock-free)
             snow_pad(S, sx * (pw_ + 0.4), 0.9, pd_ + 0.2, 6.0, 5.0, 1.6, 60 + sx, n=7 if lod == 0 else 4, bury=1.0)

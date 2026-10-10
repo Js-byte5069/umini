@@ -10,8 +10,9 @@ const V = (x, y, z) => new THREE.Vector3(x, y, z);
 const DN = makeNoise(4242);
 /** One continuous, smooth snow drift made of overlapping soft bumps (no straight edges, no vertical lip, no pad).
  *  lumps: [[cx, cz, rx, rz, height, rot?]] in the structure's local xz plane; the surface sinks into a buried skirt past its rim so it melts into
- *  whatever terrain it stands on. Vertices outside the drift are dropped, so cost follows the real footprint. */
-export function snowDrift(lumps, { seed = 1, cell = 0.55, bury = 1.0, warp = 0.2, rough = 0.06, cap = 8000 } = {}) {
+ *  whatever terrain it stands on. Vertices outside the drift are dropped, so cost follows the real footprint.
+ *  floor(x, z) (optional): local-space ground height; the skirt follows it down where the ground falls away instead of hanging over it. */
+export function snowDrift(lumps, { seed = 1, cell = 0.55, bury = 1.0, warp = 0.2, rough = 0.06, cap = 8000, floor = null } = {}) {
   const SLOPE = 0.7, skirt = bury / SLOPE;          // past its rim the surface keeps falling at a gentle slope (a snow bank), so it meets uneven ground softly
   let x0 = 1e9, x1 = -1e9, z0 = 1e9, z1 = -1e9;
   for (const [cx, cz, rx, rz] of lumps) {
@@ -33,17 +34,23 @@ export function snowDrift(lumps, { seed = 1, cell = 0.55, bury = 1.0, warp = 0.2
       else dmin = Math.min(dmin, (d - 1) * Math.sqrt(rx * rz));
     }
     if (H > 0) return H * (1 + rough * DN.fbm2(x * 0.9 + seed * 1.7, z * 0.9 + seed * 5.3, 2));
-    return -Math.min(bury, dmin * SLOPE);
+    return -dmin * SLOPE;
   };
-  const Hs = new Float32Array((nx + 1) * (nz + 1)), pos = [], map = new Int32Array((nx + 1) * (nz + 1)).fill(-1);
-  for (let j = 0; j <= nz; j++) for (let i = 0; i <= nx; i++) Hs[j * (nx + 1) + i] = heightAt(x0 + i * sx, z0 + j * sz);
-  const keep = (i, j) => Hs[j * (nx + 1) + i] > -bury + 1e-4;
+  const NX = nx + 1, Raw = new Float32Array(NX * (nz + 1)), pos = [], map = new Int32Array(NX * (nz + 1)).fill(-1);
+  for (let j = 0; j <= nz; j++) for (let i = 0; i <= nx; i++) Raw[j * NX + i] = heightAt(x0 + i * sx, z0 + j * sz);
+  const keep = (i, j) => Raw[j * NX + i] > -bury + 1e-4;
+  const vy = (a, b) => {                                                            // skirt height: the gentle bank, pulled down to just under the real ground where that falls away (no hovering rim)
+    const r = Raw[b * NX + a];
+    if (r > 0) return r;
+    const s = Math.max(r, -bury);
+    return floor ? Math.min(s, Math.max(floor(x0 + a * sx, z0 + b * sz) - 0.3, s - 1.1)) : s;
+  };
   const idx = [];
   for (let j = 0; j < nz; j++) for (let i = 0; i < nx; i++) {
     if (!(keep(i, j) || keep(i + 1, j) || keep(i, j + 1) || keep(i + 1, j + 1))) continue;
     const q = [[i, j], [i + 1, j], [i, j + 1], [i + 1, j + 1]].map(([a, b]) => {
-      const k = b * (nx + 1) + a;
-      if (map[k] < 0) { map[k] = pos.length / 3; pos.push(x0 + a * sx, Hs[k], z0 + b * sz); }
+      const k = b * NX + a;
+      if (map[k] < 0) { map[k] = pos.length / 3; pos.push(x0 + a * sx, vy(a, b), z0 + b * sz); }
       return map[k];
     });
     idx.push(q[0], q[2], q[1], q[1], q[2], q[3]);
@@ -326,7 +333,7 @@ function viaductAsset({ x0, x1, deckY, width = 13, span = 22, ground, gaps = [],
           B.add('snow', snowDrift([
             [0, 0, 4.4 * (big > 1 ? 1.2 : 1), 4.2 * (big > 1 ? 1.2 : 1), 1.45 * big], [2.9 * (sz > 0 ? -1 : 1), 1.2 * sz, 3.4, 2.4, 0.85 * big, 0.5 * sz],
             [-1.8 * (sz > 0 ? -1 : 1), -2.6 * sz, 2.6, 2.0, 0.7 * big, -0.4], [0.6, 3.2 * sz, 2.8, 1.8, 0.55],
-          ], { seed: px * 0.13 + zc, cell: lod === 0 ? 0.38 : 0.8, bury: 1.9, cap: 14000 }), M(px, yFoot - 1.78, zc), { noAO: true, tint: snowTint(Math.round(px)) });
+          ], { seed: px * 0.13 + zc, cell: lod === 0 ? 0.38 : 0.8, bury: 1.9, cap: 14000, floor: (x, z) => ground(px + x, zc + z) - (yFoot - 1.78) }), M(px, yFoot - 1.78, zc), { noAO: true, tint: snowTint(Math.round(px)) });
         }
         col(px - 1.8, g - 1, zc - 1.5, px + 1.8, top, zc + 1.5);
       }
