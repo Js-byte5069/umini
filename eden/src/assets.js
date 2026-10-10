@@ -4,7 +4,7 @@ import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { MAT, RAMP } from './materials.js';
 
 // structures.glb light strips / seams use the key 'glow'; they are drawn with this softer emissive (the stock hot-neon 'glow' blooms into hard blocks)
-MAT.glowSoft ??= new THREE.MeshToonMaterial({ color: 0xe48a6e, emissive: 0xc6523a, emissiveIntensity: 0.55, gradientMap: RAMP, vertexColors: true });
+MAT.glowSoft ??= new THREE.MeshToonMaterial({ color: 0xe48272, emissive: 0xb84a48, emissiveIntensity: 0.5, gradientMap: RAMP, vertexColors: true });
 
 export const ASSETS = { rocks: null, buildings: null, buildingSpecs: null, props: null, structs: null };
 

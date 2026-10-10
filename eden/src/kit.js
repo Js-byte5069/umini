@@ -14,6 +14,24 @@ export function M(x = 0, y = 0, z = 0, rx = 0, ry = 0, rz = 0, sx = 1, sy = sx, 
 }
 
 // ── batching ────────────────────────────────────────────────────────────────
+// Per material family: part-to-part painted drift (value v, hue h as an rgb multiplier at +1) and the soft highlight an exposed convex edge picks up.
+const KEY_STYLE = {
+  wall:       { g: 0.050, v: 0.050, h: [0.020, 0.000, -0.030], edge: [1.12, 1.13, 1.17] },
+  wallLight:  { g: 0.040, v: 0.045, h: [0.020, 0.000, -0.030], edge: [1.10, 1.11, 1.15] },
+  wallDark:   { g: 0.050, v: 0.050, h: [0.020, 0.000, -0.030], edge: [1.14, 1.15, 1.20] },
+  trim:       { g: 0.035, v: 0.040, h: [0.015, 0.000, -0.020], edge: [1.10, 1.11, 1.15] },
+  metal:      { g: 0.030, v: 0.045, h: [0.020, 0.000, -0.030], edge: [1.16, 1.17, 1.22] },
+  deck:       { g: 0.035, v: 0.045, h: [0.020, 0.000, -0.030], edge: [1.10, 1.11, 1.15] },
+  accent:     { g: 0.060, v: 0.055, h: [0.040, 0.100, -0.080], edge: [1.08, 1.19, 1.15] },
+  accentDark: { g: 0.060, v: 0.055, h: [0.040, 0.100, -0.080], edge: [1.10, 1.22, 1.16] },
+  rockBlue:   { g: 0.040, v: 0.050, h: [0.020, 0.000, -0.030], edge: [1.08, 1.09, 1.12] },
+  rockRed:    { g: 0.040, v: 0.050, h: [0.040, 0.090, -0.070], edge: [1.07, 1.14, 1.10] },
+};
+const SUNV = new THREE.Vector3(-0.78, 0.55, 0.1).normalize();
+const hash1 = (x, y, z, s) => { const h = Math.sin(x * 12.9898 + y * 78.233 + z * 37.719 + s * 4.1414) * 43758.5453; return h - Math.floor(h); };
+let _keySeed = new Map();
+const keySeed = (k) => { let v = _keySeed.get(k); if (v === undefined) { v = 0; for (let i = 0; i < k.length; i++) v = (v * 31 + k.charCodeAt(i)) % 997; _keySeed.set(k, v); } return v; };
+
 /** Collects transformed geometry per material key, bakes cheap vertical AO into vertex colours, merges. */
 export class Batch {
   constructor() { this.parts = new Map(); }
@@ -25,6 +43,41 @@ export class Batch {
     const pos = g.attributes.position, nor = g.attributes.normal;
     const col = new Float32Array(pos.count * 3);
     const tint = o.tint;
+    const style = !tint && !o.noAO ? KEY_STYLE[key] : null;
+    // painted drift: every placed part gets its own slight value / hue shift (stable across LODs: keyed on the placement, not the mesh)
+    let jv = 1, jr = 1, jg = 1, jb = 1;
+    if (style) {
+      let cx, cy, cz;
+      if (matrix) { const e = matrix.elements; cx = e[12]; cy = e[13]; cz = e[14]; }
+      else { g.computeBoundingBox(); const b = g.boundingBox; cx = Math.round((b.min.x + b.max.x) / 8); cy = Math.round((b.min.y + b.max.y) / 8); cz = Math.round((b.min.z + b.max.z) / 8); }
+      const s = keySeed(key);
+      const r1 = hash1(cx, cy, cz, s) * 2 - 1, r2 = hash1(cx + 1.7, cy - 3.1, cz + 5.3, s + 7) * 2 - 1;
+      jv = 1 + r1 * style.v;
+      jr = jv * (1 + r2 * style.h[0]); jg = jv * (1 + r2 * style.h[1]); jb = jv * (1 + r2 * style.h[2]);
+    }
+    // painted gradient across each placed part (lighter / warmer at its top, deeper / cooler at its foot): large faces never read as one flat fill
+    let gy0 = 0, gHi = 0;
+    if (style) { g.computeBoundingBox(); const bb = g.boundingBox; gy0 = bb.min.y; gHi = bb.max.y - bb.min.y; if (gHi < 0.9) gHi = 0; }
+    // stylised edges: triangles that bend the normal over a short run (rounded bevels / chamfers) are exposed convex edges: they pick up a soft light edge
+    let edge = null;
+    if (style) {
+      edge = new Float32Array(pos.count);
+      for (let t = 0; t + 2 < pos.count; t += 3) {
+        const ax = pos.getX(t), ay = pos.getY(t), az = pos.getZ(t);
+        const bx = pos.getX(t + 1), by = pos.getY(t + 1), bz = pos.getZ(t + 1);
+        const cx2 = pos.getX(t + 2), cy2 = pos.getY(t + 2), cz2 = pos.getZ(t + 2);
+        const l2 = Math.max((ax - bx) ** 2 + (ay - by) ** 2 + (az - bz) ** 2, (bx - cx2) ** 2 + (by - cy2) ** 2 + (bz - cz2) ** 2, (cx2 - ax) ** 2 + (cy2 - ay) ** 2 + (cz2 - az) ** 2);
+        if (l2 > 0.2) continue;           // longer than ~0.45 m: a surface, not a bevel
+        const n0x = nor.getX(t), n0y = nor.getY(t), n0z = nor.getZ(t), n1x = nor.getX(t + 1), n1y = nor.getY(t + 1), n1z = nor.getZ(t + 1), n2x = nor.getX(t + 2), n2y = nor.getY(t + 2), n2z = nor.getZ(t + 2);
+        const d = Math.min(n0x * n1x + n0y * n1y + n0z * n1z, n1x * n2x + n1y * n2y + n1z * n2z, n0x * n2x + n0y * n2y + n0z * n2z);
+        if (d > 0.996) continue;          // flat (< ~5 degrees): not an edge
+        const my = (n0y + n1y + n2y) / 3;
+        if (my < -0.3) continue;          // undersides stay calm
+        const sun = (n0x + n1x + n2x) / 3 * SUNV.x + my * SUNV.y + (n0z + n1z + n2z) / 3 * SUNV.z;
+        const w = 0.55 + 0.45 * clamp(sun * 1.6 + 0.5, 0, 1);       // sunward edges catch the most light
+        edge[t] = edge[t + 1] = edge[t + 2] = w;
+      }
+    }
     for (let i = 0; i < pos.count; i++) {
       let k = 1;
       if (!o.noAO) {
@@ -33,9 +86,13 @@ export class Batch {
         if (nor.getY(i) < -0.35) k *= 0.84;
       }
       if (baked) k *= 0.58 + 0.42 * baked.getX(i);
-      col[i * 3] = Math.pow(k, 1.15) * (tint ? tint.r : 1);
-      col[i * 3 + 1] = k * (tint ? tint.g : 1);
-      col[i * 3 + 2] = Math.pow(k, 0.86) * (tint ? tint.b : 1);
+      let er = 1, eg = 1, eb = 1;
+      if (edge && edge[i] > 0) { const w = edge[i], e = style.edge; er = 1 + (e[0] - 1) * w; eg = 1 + (e[1] - 1) * w; eb = 1 + (e[2] - 1) * w; }
+      let gr = 1, gg = 1, gb = 1;
+      if (gHi > 0) { const t = clamp((pos.getY(i) - gy0) / gHi, 0, 1) * 2 - 1, gv = style.g * t; gr = 1 + gv * 1.15; gg = 1 + gv; gb = 1 + gv * 0.8; }
+      col[i * 3] = Math.pow(k, 1.15) * (tint ? tint.r : jr * er * gr);
+      col[i * 3 + 1] = k * (tint ? tint.g : jg * eg * gg);
+      col[i * 3 + 2] = Math.pow(k, 0.86) * (tint ? tint.b : jb * eb * gb);
     }
     g.setAttribute('color', new THREE.BufferAttribute(col, 3));
     let list = this.parts.get(key);
@@ -169,20 +226,27 @@ export function ringShape(rOut, rIn, a0 = 0, a1 = Math.PI * 2, arcSeg = 96) {
 
 // ── snow ────────────────────────────────────────────────────────────────────
 const SN = makeNoise(99);
-/** soft rounded snow pillow: plump, smooth, buried skirt so it never floats. Footprint w×d, peak height t. */
+/** thick, soft, rounded snow pillow: plump shoulder, organic (noise-warped) outline, lumpy crown, buried skirt so it never floats.
+ *  Footprint w×d, peak height t. The outline only ever pulls inward (never outside w×d); the steep lip is shaded a little darker / cooler through the baked colour. */
 export function snowPillow(w, d, t, { seed = 1, seg = 20, p = 2.8, lump = 0.14, bury = 0.5 } = {}) {
   const nx = Math.max(8, Math.round(seg * Math.min(2, Math.max(0.6, w / Math.max(w, d)) + 0.2))),
         nz = Math.max(8, Math.round(seg * Math.min(2, Math.max(0.6, d / Math.max(w, d)) + 0.2)));
-  const pos = [], idx = [];
+  const pos = [], idx = [], mm = [];
   const W = nx + 1;
   for (let j = 0; j <= nz; j++)
     for (let i = 0; i <= nx; i++) {
-      const u = (i / nx) * 2 - 1, v = (j / nz) * 2 - 1;
-      const m = Math.max(0, 1 - Math.pow(Math.pow(Math.abs(u), p) + Math.pow(Math.abs(v), p), 1 / p));
-      const edge = Math.pow(m, 0.5);
+      // vertices crowd toward the outline (the profile changes fastest there): a smoother lip for the same vertex count
+      const tu = (i / nx) * 2 - 1, tv = (j / nz) * 2 - 1;
+      const u = lerp(tu, Math.sin(tu * Math.PI / 2), 0.6), v = lerp(tv, Math.sin(tv * Math.PI / 2), 0.6);
+      // organic outline: slow bulges + a short scalloped lip, shrinking the footprint only (>= 1)
+      const wob = 1 + 0.10 * (0.5 + 0.5 * SN.n2(u * 1.5 + seed * 3.1, v * 1.5 + seed * 1.3)) + 0.05 * (0.5 + 0.5 * SN.n2(u * 4.6 + seed, v * 4.6 + 7.7));
+      const rr = Math.pow(Math.pow(Math.abs(u), p) + Math.pow(Math.abs(v), p), 1 / p) * wob;
+      const m = Math.max(0, 1 - rr);
+      const edge = Math.pow(m, 0.42);
       const n = 1 + lump * SN.n2(u * 1.6 + seed * 3.1, v * 1.6 + seed * 1.7) + lump * 0.5 * SN.n2(u * 4 + seed, v * 4);
       const y = t * edge * n - (m < 1e-4 ? bury : 0);
       pos.push(u * w / 2, y, v * d / 2);
+      mm.push(m);
     }
   for (let j = 0; j < nz; j++)
     for (let i = 0; i < nx; i++) {
@@ -193,10 +257,17 @@ export function snowPillow(w, d, t, { seed = 1, seg = 20, p = 2.8, lump = 0.14, 
   g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
   g.setIndex(idx);
   g.computeVertexNormals();
+  // steep lip walls sit a shade deeper / cooler than the crown (read by Batch as the baked-AO channel)
+  const nA = g.attributes.normal, cl = new Float32Array(pos.length);
+  for (let i = 0; i < mm.length; i++) {
+    const x = 1 - 0.45 * (1 - sstep(0.3, 0.8, nA.getY(i))) * (1 - 0.5 * sstep(0.3, 0.7, mm[i]));
+    cl[i * 3] = cl[i * 3 + 1] = cl[i * 3 + 2] = x;
+  }
+  g.setAttribute('color', new THREE.BufferAttribute(cl, 3));
   return g;
 }
 
-const snowTints = [new THREE.Color(0xffffff), new THREE.Color(0xe4edff), new THREE.Color(0xd2e0ff)];
+const snowTints = [new THREE.Color(0xffffff), new THREE.Color(0xf0f4ff), new THREE.Color(0xe3ebff)];
 export const snowTint = (i) => snowTints[((i % 3) + 3) % 3];
 
 // ── sculpted stylised rock ──────────────────────────────────────────────────

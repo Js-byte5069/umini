@@ -3,7 +3,7 @@
 // stay cheap. Procedural fallback if rocks.glb is missing.
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
-import { RAMP_ROCK } from './materials.js';
+import { RAMP_ROCK, NOISE_GLSL, GRADE_GLSL } from './materials.js';
 import { sculptRock, snowPillow, snowTint } from './kit.js';
 import { rng, lerp, sstep, clamp, makeNoise } from './noise.js';
 import { heightAt, slopeAt, canyonX, canyonHalfWidthAt, snowColorAt, HALF_X } from './terrain.js';
@@ -12,57 +12,105 @@ const SN = makeNoise(4242);
 const TAU = Math.PI * 2;
 
 // One material for everything a cluster draws (rock bodies, snow caps, snow banks, pebbles) so a cluster costs a single draw call per pass.
-// Per-vertex mask aMask: 2 = rock body (painted: brush drift, strata lines, 5-tone cel ramp), 3 = pebble (same, no shadow); <= 1 = snow cap / bank
-// (mask thresholded per pixel with alpha-to-coverage -> smooth contour, 3-tone terrain-like snow ramp). Colours live in the vertex colours.
-const NOISE_GLSL = /* glsl */ `
-float h21(vec2 p){ return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
-float vn(vec2 p){ vec2 i = floor(p), f = fract(p); f = f*f*(3.0-2.0*f);
-  return mix(mix(h21(i), h21(i+vec2(1,0)), f.x), mix(h21(i+vec2(0,1)), h21(i+vec2(1,1)), f.x), f.y); }
-float fbm2(vec2 p){ return vn(p)*0.55 + vn(p*2.07+3.1)*0.3 + vn(p*4.3+7.7)*0.15; }
+// Per-vertex mask aMask: 2 = rock body (painted: soft drift, strata bands, soft 5-tone cel ramp), 3 = pebble (same, no shadow); <= 1 = snow cap / bank
+// (mask thresholded per pixel with alpha-to-coverage -> smooth contour, 3-tone terrain-like snow ramp). aBank = 1 on the snow banks that melt into the terrain
+// (they keep the terrain's own shading so they never show a seam). Colours live in the vertex colours.
+// chiselled rock planes: nearest-feature cells (2x2x2 search, jittered points) give polygonal facets with straight-ish borders; the facet id drives a planar normal tilt
+// (distinct light / mid / shade planes) and a small value / hue shift, with a narrow soft blend across borders
+const FACET_GLSL = /* glsl */ `
+vec3 h33(vec3 p){ p = vec3(dot(p, vec3(127.1, 311.7, 74.7)), dot(p, vec3(269.5, 183.3, 246.1)), dot(p, vec3(113.5, 271.9, 124.6))); return fract(sin(p) * 43758.5453); }
+vec3 facetAttr(vec3 p) {
+  vec3 ip = floor(p), f = fract(p);
+  vec3 base = ip + step(0.5, f) - 1.0;
+  float d1 = 9.0, d2 = 9.0; vec3 i1 = vec3(0.0), i2 = vec3(0.0);
+  for (int k = 0; k < 2; k++) for (int j = 0; j < 2; j++) for (int i = 0; i < 2; i++) {
+    vec3 c = base + vec3(float(i), float(j), float(k));
+    vec3 r = c + 0.15 + 0.7 * h33(c) - p;
+    float d = dot(r, r);
+    if (d < d1) { d2 = d1; i2 = i1; d1 = d; i1 = c; } else if (d < d2) { d2 = d; i2 = c; }
+  }
+  float wB = 0.5 * (1.0 - smoothstep(0.0, 0.12, sqrt(d2) - sqrt(d1)));
+  return mix(h33(i1 + 7.0), h33(i2 + 7.0), wB) - 0.5;
+}
 `;
 const rockMat = new THREE.MeshToonMaterial({ color: 0xffffff, gradientMap: RAMP_ROCK, vertexColors: true, alphaToCoverage: true });
 rockMat.onBeforeCompile = (sh) => {
   sh.vertexShader = sh.vertexShader
-    .replace('#include <common>', '#include <common>\nattribute float aMask;\nvarying float vMask;\nvarying vec3 vWN;\nvarying vec3 vWP;')
-    .replace('#include <begin_vertex>', '#include <begin_vertex>\n vMask = aMask;\n vWN = normalize(mat3(modelMatrix) * objectNormal);\n vWP = (modelMatrix * vec4(transformed, 1.0)).xyz;');
+    .replace('#include <common>', '#include <common>\nattribute float aMask;\nattribute float aBank;\nvarying float vMask;\nvarying float vBank;\nvarying vec3 vWN;\nvarying vec3 vWP;')
+    .replace('#include <begin_vertex>', '#include <begin_vertex>\n vMask = aMask;\n vBank = aBank;\n vWN = normalize(mat3(modelMatrix) * objectNormal);\n vWP = (modelMatrix * vec4(transformed, 1.0)).xyz;');
   sh.fragmentShader = sh.fragmentShader
-    .replace('#include <common>', '#include <common>\nvarying float vMask;\nvarying vec3 vWN;\nvarying vec3 vWP;\nfloat gSnow = 0.0;\n' + NOISE_GLSL)
+    .replace('#include <common>', '#include <common>\nvarying float vMask;\nvarying float vBank;\nvarying vec3 vWN;\nvarying vec3 vWP;\nfloat gSnow = 0.0;\nfloat gSnowA = 0.0;\nfloat gGradeK = 1.0;\nvec3 gShade = vec3(0.0);\nvec3 gShadeAbs = vec3(0.0);\nvec3 gWarm = vec3(1.0);\nvec3 gFacet = vec3(0.0);\n' + FACET_GLSL + NOISE_GLSL)
     .replace('#include <gradientmap_pars_fragment>', `uniform sampler2D gradientMap;
 vec3 getGradientIrradiance( vec3 normal, vec3 lightDirection ) {
   float dotNL = dot( normal, lightDirection );
   float rockR = texture2D( gradientMap, vec2( dotNL * 0.5 + 0.5, 0.0 ) ).r;
-  float snowR = dotNL < -0.75 ? 0.0 : ( dotNL < 0.45 ? 0.502 : 1.0 );      // the terrain's 3-tone snow ramp
+  float snowR = 0.5 * smoothstep( -0.80, -0.70, dotNL ) + 0.5 * smoothstep( 0.38, 0.52, dotNL );      // the terrain's 3-tone snow ramp (soft terminators)
   return vec3( mix( rockR, snowR, gSnow ) );
 }`)
     .replace('#include <color_fragment>', `#include <color_fragment>
   gSnow = step(vMask, 1.5);
   diffuseColor.a = gSnow > 0.5 ? smoothstep(0.44, 0.56, vMask) : 1.0;
   if (diffuseColor.a < 0.01) discard;
+  gSnowA = gSnow;
+  gGradeK = 1.0 - vBank;
   if (gSnow < 0.5) {
-    // hand-painted rock: brush-like value drift, bedding lines on steep faces
+    // hand-painted rock: slow colour drift (slate / violet, or muted orange / coral / red), soft per-layer strata steps, no streaky noise
     vec3 baseC = diffuseColor.rgb;
-    float drift = fbm2(vec2(vWP.x * 0.11 + vWP.z * 0.09, vWP.y * 0.32)) - 0.5;
-    baseC *= 1.0 + drift * 0.24;
-    baseC += vec3(-0.01, 0.0, 0.02) * drift;
+    float redK = smoothstep(0.02, 0.22, baseC.r - baseC.b);
+    float dA = vn(vWP.xz * 0.043 + vWP.y * 0.021 + 3.7), dB = vn(vWP.xz * 0.17 + vWP.y * 0.12 + 9.1);
+    float dr = smoothstep(0.2, 0.8, dA * 0.72 + dB * 0.28);
+    baseC *= mix(mix(vec3(0.97, 0.99, 1.04), vec3(1.03, 1.0, 0.99), dr), mix(vec3(1.03, 1.10, 0.92), vec3(0.95, 0.88, 1.04), dr), redK);
     float hg = smoothstep(-2.0, 46.0, vWP.y);
-    baseC *= mix(0.88, 1.08, hg);
-    float ly = vWP.y * 0.85 + fbm2(vWP.xz * 0.3) * 0.9 + (vWP.x * 0.3 + vWP.z * 0.2) * 0.05;
+    baseC *= mix(0.90, 1.08, hg);
+    // wavy strata: soft per-layer value / hue steps (a coral-orange or deep-red layer now and then on red rocks, violet / cool layers on slate)
+    float ly = vWP.y * 1.0 + fbm2(vWP.xz * 0.25) * 1.3 + (vn(vWP.xz * 0.8 + 4.0) - 0.5) * 0.9 + (vWP.x * 0.3 + vWP.z * 0.2) * 0.05;
+    float lk = floor(ly), lfr = smoothstep(0.0, 0.18, fract(ly));
     float vert = 1.0 - smoothstep(0.3, 0.7, abs(vWN.y));
-    baseC *= 1.0 - (1.0 - smoothstep(0.0, 0.05 + fwidth(ly) * 1.5, fract(ly))) * 0.14 * vert;
-    baseC *= 0.94 + 0.10 * h21(vec2(floor(ly), 3.7));
+    float lh = mix(h21(vec2(lk - 1.0, 3.7)), h21(vec2(lk, 3.7)), lfr);
+    float lt = mix(h21(vec2(lk - 1.0, 8.3)), h21(vec2(lk, 8.3)), lfr);
+    float lc = mix(h21(vec2(lk - 1.0, 5.1)), h21(vec2(lk, 5.1)), lfr);
+    float aaS = 1.0 - smoothstep(0.15, 0.6, fwidth(ly));        // layers fade to their mean once they are about a pixel thick
+    baseC *= 1.0 + (0.12 * lh - 0.06) * aaS;
+    float band = smoothstep(0.55, 0.70, lt) * aaS;
+    baseC *= mix(vec3(1.0), mix(vec3(0.90, 0.80, 0.98), vec3(1.05, 1.13, 0.92), lc), band * 0.85 * redK);
+    baseC *= mix(vec3(1.0), mix(vec3(0.94, 0.98, 1.03), vec3(1.03, 0.99, 1.05), lc), band * 0.8 * (1.0 - redK));
+    // chiselled planes: facet cells (warped by a slow noise so borders are never a grid) tilt the shading normal and shift each plane's value / hue
+    {
+      float camD = distance(vWP, cameraPosition);
+      vec2 w1 = vec2(vn(vWP.xz * 0.55 + vWP.y * 0.35 + 3.0), vn(vWP.zx * 0.55 + vWP.y * 0.35 + 17.0)) - 0.5;
+      float wy = vn(vec2(vWP.x + vWP.z, vWP.y) * 0.7 + 5.0) - 0.5;
+      vec3 pf = (vWP + vec3(w1.x, wy, w1.y) * 1.1) / vec3(1.9, 1.5, 1.9);
+      vec3 fa = facetAttr(pf);
+      float fade = 1.0 - smoothstep(60.0, 200.0, camD);
+      gFacet = vec3(fa.x * 1.5, fa.y * 0.8, fa.z * 1.5) * fade;
+      baseC *= 1.0 + (fa.x * 0.26 + w1.x * 0.14) * fade;
+      baseC *= mix(vec3(1.0 + fa.z * 0.10, 1.0, 1.0 - fa.z * 0.10), vec3(1.0, 1.0 + fa.z * 0.34, 1.0 - fa.z * 0.18), redK);
+    }
+    baseC *= 1.0 - (1.0 - smoothstep(0.0, 0.10 + fwidth(ly) * 1.5, fract(ly))) * 0.05 * vert;
     diffuseColor.rgb = baseC;
+    gShade = mix(vec3(0.130, 0.100, 0.075), vec3(0.155, 0.062, 0.100), redK);
+    gShadeAbs = mix(vec3(0.020, 0.018, 0.026), vec3(0.050, 0.018, 0.034), redK);
+    gWarm = vec3(1.03, 1.0, 0.96);
+  } else {
+    // snow cap: warm white <-> cool white drift (banks keep the terrain's own colour)
+    float k = smoothstep(0.25, 0.75, vn(vWP.xz * 0.06 + 5.0) * 0.75 + vn(vWP.xz * 0.23 + 17.0) * 0.25);
+    vec3 snowV = mix(vec3(1.0, 0.995, 0.985), vec3(0.935, 0.962, 1.0), k);
+    snowV *= mix(vec3(0.90, 0.935, 1.02), vec3(1.0), smoothstep(0.52, 0.86, vMask));      // rounded shoulder: the lip is a shade cooler / deeper than the crown
+    diffuseColor.rgb *= mix(vec3(1.0), snowV, 1.0 - vBank);
   }`)
+    .replace('#include <normal_fragment_maps>', '#include <normal_fragment_maps>\n normal = normalize(normal + (viewMatrix * vec4(gFacet, 0.0)).xyz);')
     .replace('#include <emissivemap_fragment>', `#include <emissivemap_fragment>
   totalEmissiveRadiance += diffuseColor.rgb * mix(vec3(0.11, 0.075, 0.105), vec3(0.03, 0.05, 0.118), gSnow) * (0.5 + 0.5 * smoothstep(1.5, -0.5, vWN.y));   // sky/snow bounce keeps shade from going flat`)
     .replace('#include <opaque_fragment>', `{
     float nv = clamp(dot(normalize(normal), normalize(vViewPosition)), 0.0, 1.0);
-    float rim = pow(1.0 - nv, 3.0);
-    outgoingLight += vec3(0.30, 0.42, 0.78) * rim * 0.18 * (1.0 - gSnow * 0.6) * (0.4 + 0.6 * step(0.3, vWN.y + 0.4));
+    float rim = pow(1.0 - nv, 4.0);
+    outgoingLight += vec3(0.30, 0.42, 0.78) * rim * 0.08 * (1.0 - gSnow * 0.6) * (0.4 + 0.6 * step(0.3, vWN.y + 0.4));
   }
+` + GRADE_GLSL + `
 #include <opaque_fragment>`);
 };
 rockMat.polygonOffset = true; rockMat.polygonOffsetFactor = -1; rockMat.polygonOffsetUnits = -1;
-rockMat.customProgramCacheKey = () => 'scatter-rock3';
+rockMat.customProgramCacheKey = () => 'scatter-rock6';
 // shadow caster: only rock bodies (snow caps / banks / pebbles are skipped so thin snow never shadows the ground it hugs)
 const rockDepth = new THREE.MeshDepthMaterial({ depthPacking: THREE.RGBADepthPacking });
 rockDepth.onBeforeCompile = (sh) => {
@@ -74,7 +122,7 @@ rockDepth.onBeforeCompile = (sh) => {
     .replace('void main() {', 'void main() {\n  if (vM < 1.5 || vM > 2.5) discard;');
 };
 rockDepth.customProgramCacheKey = () => 'scatter-rockdepth1';
-const RED_C = new THREE.Color(0xc15a47), BLUE_C = new THREE.Color(0x939cc4);       // = the palette's rock colours (the slate is lifted a little so AO / cel bands never turn it navy)
+const RED_C = new THREE.Color(0xe07468), BLUE_C = new THREE.Color(0x8f94b8);       // = the palette's rock colours (the slate is lifted a little so AO / cel bands never turn it navy)
 // per-instance colour families (multiply the material colour: value and hue shifts, never brighter than the base)
 const RED_TINTS = [[1, 1, 1], [1, 0.90, 0.80], [0.93, 0.82, 0.85], [0.98, 0.95, 0.90], [0.88, 0.78, 0.76]].map((a) => new THREE.Color(...a));
 const BLUE_TINTS = [[1, 1, 1], [0.93, 0.96, 1], [0.96, 0.92, 0.97], [0.88, 0.92, 0.98]].map((a) => new THREE.Color(...a));
@@ -138,7 +186,7 @@ function fallbackLib() {
 // ── merged, indexed geometry ─────────────────────────────────────────────────────────────────
 const _v = new THREE.Vector3(), _nv = new THREE.Vector3(), _c = new THREE.Color();
 class Merge {
-  constructor() { this.P = []; this.N = []; this.C = []; this.I = []; this.K = []; this.base = 0; }
+  constructor() { this.P = []; this.N = []; this.C = []; this.I = []; this.K = []; this.B = []; this.base = 0; }
   /** rock body (rockC given: colour x tint x baked shade, mask 2) or snow cap / bank (no rockC: white-ish tint, mask from the geometry) */
   add(src, mat, tint, yLocal = 0, noAO = false, hRef = 9, rockC = null) {
     const pos = src.attributes.position, nor = src.attributes.normal, baked = src.attributes.color, idx = src.index;
@@ -151,7 +199,7 @@ class Merge {
       this.P.push(_v.x, _v.y, _v.z); this.N.push(_nv.x, _nv.y, _nv.z);
       let k = 1;
       if (!noAO) {
-        k = lerp(0.74, 1, sstep(-0.10 * hRef, 0.80 * hRef, _v.y - yLocal));
+        k = lerp(0.84, 1, sstep(-0.10 * hRef, 0.80 * hRef, _v.y - yLocal));
         if (_nv.y < -0.35) k *= 0.80;
         if (baked) k *= 0.55 + 0.45 * baked.getX(i);
       }
@@ -159,6 +207,7 @@ class Merge {
       else if (rockC) this.C.push(Math.pow(k, 1.15) * rockC.r, k * rockC.g, Math.pow(k, 0.86) * rockC.b);
       else this.C.push(Math.pow(k, 1.15) * (tint ? tint.r : 1), k * (tint ? tint.g : 1), Math.pow(k, 0.86) * (tint ? tint.b : 1));
       this.K.push(rockC ? 2 : tmask ? tmask.getX(i) : baked ? baked.getX(i) : 1);
+      this.B.push(tcol ? 1 : 0);
     }
     if (idx) for (let i = 0; i < idx.count; i++) this.I.push(idx.getX(i) + this.base);
     else for (let i = 0; i < n; i++) this.I.push(i + this.base);
@@ -176,7 +225,7 @@ class Merge {
       const sh = baked ? 0.45 + 0.55 * baked.getX(i) : 1;
       _c.copy(rockC).multiply(tint).multiplyScalar(sh);
       if (hasSnow) _c.lerp(snowC, sstep(0.70, 0.92, _nv.y));
-      this.C.push(_c.r, _c.g, _c.b); this.K.push(3);       // mask class 3: rock-shaded (5-tone ramp) but never a shadow caster
+      this.C.push(_c.r, _c.g, _c.b); this.K.push(3); this.B.push(0);       // mask class 3: rock-shaded (5-tone ramp) but never a shadow caster
     }
     if (idx) for (let i = 0; i < idx.count; i++) this.I.push(idx.getX(i) + this.base);
     else for (let i = 0; i < n; i++) this.I.push(i + this.base);
@@ -189,6 +238,7 @@ class Merge {
     g.setAttribute('normal', new THREE.Float32BufferAttribute(this.N, 3));
     g.setAttribute('color', new THREE.Float32BufferAttribute(this.C, 3));
     g.setAttribute('aMask', new THREE.Float32BufferAttribute(this.K, 1));
+    g.setAttribute('aBank', new THREE.Float32BufferAttribute(this.B, 1));
     g.setIndex(this.base > 65535 ? new THREE.Uint32BufferAttribute(this.I, 1) : new THREE.Uint16BufferAttribute(this.I, 1));
     g.computeBoundingSphere();
     return g;
