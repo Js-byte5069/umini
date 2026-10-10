@@ -82,27 +82,73 @@ const WIND_X = 0.906, WIND_Z = 0.423;
 const TAU = Math.PI * 2;
 const hsh = (n) => { n = Math.imul(n ^ (n >>> 15), 0x2c1b3c6d); n = Math.imul(n ^ (n >>> 12), 0x297a2d39); return ((n ^ (n >>> 15)) >>> 0) / 4294967296; };
 
-// ── legacy foot line ───────────────────────────────────────────────────────────────────────────────────────
-// The accepted level layout (props, exit yards, gate wings, spire discs) was built around where the previous cliffs started. The new tier-0 face
-// foot follows that old first-riser line, smoothed along the wall (its crisp block jogs removed), so every wall stays where it was.
-function legacySpec(seed, n, len, H) {
+// ── legacy cliff ────────────────────────────────────────────────────────────────────────────────────────────
+// The accepted level layout (props, exit yards, gate wings, spire discs) was built around the previous stepped cliffs. Two things keep it intact:
+//  1. the new tier-0 face foot follows the old first-riser line (smoothed: its crisp block jogs are rounded, and only ever pushed away from the floor);
+//  2. the old cliff function itself is kept (oldCliff below) and blended in under rigid props (see padLock), so the ground a prop was seated on stays put.
+/** the old chiselled block offset (crisp jogs half way between the random node values), replaced by the same node values joined with a smooth S curve.
+ *  The curve is an upper envelope of the old line: a jog that moved the foot deeper into the wall is made early, one that brought it back is made late, so
+ *  the new face never starts nearer to the floor than the old first riser did (props, needles and boulders were placed on that old floor). */
+function legacyBlk(q, K, seed) {
+  const j = Math.floor(q), fq = q - j;
+  const j0 = K ? ((j % K) + K) % K : j, j1 = K ? (((j + 1) % K) + K) % K : j + 1;
+  const o0 = hsh(j0 * 131 + seed) - 0.5, o1 = hsh(j1 * 131 + seed) - 0.5;
+  const t = o1 > o0 ? clamp(fq * 1.8) : clamp((fq - 0.5) * 1.8 + 0.1);
+  return o0 + (o1 - o0) * t * t * (3 - 2 * t);
+}
+/** the previous first-riser plan position (m past the wall foot) at one point along the wall */
+function legacyFoot(l, along, wx, wz, circ) {
+  const gq = circ > 0 ? N.n2(Math.cos(along / circ * TAU) * circ * l.gf + l.gph, Math.sin(along / circ * TAU) * circ * l.gf + 3.7) : N.n2(along * l.gf + l.gph, 11.3);
+  // the old V-shaped gullies become broad, soft bays (twice as wide, rounded bottom): no radial grooves up the face
+  const gg = sm01(1 - Math.abs(gq) * 2.4);
+  const gdepth = gg * l.gA * 0.8 * (0.5 + 0.5 * N.n2(along * 0.017 + 5.5, l.gph));
+  const jogA = l.jogA[0], jogF = l.jogF[0], bamp = l.bamp[0], blen = l.blen[0];
+  let p = l.p[0] + jogA * (circ > 0 ? N.n2(wx * jogF + l.ph[0], wz * jogF) : N.n2(along * jogF + l.ph[0], 0.5));
+  const K = circ > 0 ? Math.max(3, Math.round(circ / blen)) : 0;
+  p += bamp * 2 * legacyBlk(K ? (along / circ) * K : along / blen, K, l.seed * 7);
+  const K2 = circ > 0 ? Math.max(6, Math.round(circ / (blen * 0.48))) : 0;
+  p += bamp * 0.30 * legacyBlk(K2 ? (along / circ) * K2 : along / (blen * 0.48), K2, l.seed * 11 + 5);
+  return p + gdepth * 0.385;
+}
+const smoothLegacyFoot = legacyFoot;
+
+function makeOldSpec(seed, n, len, H) {
   const r = rng(seed * 977 + 11);
-  const rise = [], ledge = [], run = [], jogA = [], jogF = [], bamp = [], blen = [], ph = [];
-  let ws = 0, ls = 0, p0 = 0;
+  const rise = [], ledge = [], slope = [], run = [], p = [], jogA = [], jogF = [], bamp = [], blen = [], fil = [], fd = [], ph = [], tw = [];
+  let ws = 0, ls = 0;
   for (let i = 0; i < n; i++) { const v = 0.5 + r() * 1.0 + (r() < 0.3 ? 0.8 : 0); rise.push(v); ws += v; }
   for (let i = 0; i < n; i++) { const v = (i === 0 ? 0.9 : 0.35) + r() * 1.25; ledge.push(v); ls += v; }
   let runSum = 0;
-  for (let i = 0; i < n; i++) { rise[i] /= ws; const sl = 2.2 + r() * 1.8; run.push(Math.max(1.4, rise[i] * H / sl)); runSum += run[i]; }
-  const budget = Math.max(len - runSum, n * 3);
   for (let i = 0; i < n; i++) {
-    if (i === 0) p0 = (ledge[0] / ls) * budget;
-    jogA.push(0.4 + r() * 1.0); jogF.push(0.012 + r() * 0.02); bamp.push(2.4 + r() * 4.6); blen.push(8 + r() * 16);
-    if (i > 0) { r(); r(); }                                               // fil, fd
-    ph.push(r() * 400); r();                                               // ph, tw
+    rise[i] /= ws;
+    slope.push(2.2 + r() * 1.8);
+    run.push(Math.max(1.4, rise[i] * H / slope[i]));
+    runSum += run[i];
   }
-  return { p0, jogA: jogA[0], jogF: jogF[0], bamp: bamp[0], blen: blen[0], ph: ph[0], seed, gf: 0.03 + r() * 0.015, gA: 6 + r() * 6, gph: r() * 300 };
+  const budget = Math.max(len - runSum, n * 3);
+  let c = 0;
+  for (let i = 0; i < n; i++) {
+    c += (ledge[i] / ls) * budget;
+    p.push(c);
+    c += run[i];
+    jogA.push(0.4 + r() * 1.0);
+    jogF.push(0.012 + r() * 0.02);
+    bamp.push(2.4 + r() * 4.6);
+    blen.push(8 + r() * 16);
+    fil.push(i === 0 ? 0.42 : 0.14 + r() * 0.16);
+    fd.push(i === 0 ? 6.5 : 1.8 + r() * 1.6);
+    ph.push(r() * 400);
+    tw.push(0.04 + r() * 0.9);
+  }
+  const suf = new Array(n + 1).fill(0);
+  for (let i = n - 1; i >= 0; i--) suf[i] = suf[i + 1] + rise[i];
+  return { n, len, seed, suf, rise, run, p, jogA, jogF, bamp, blen, fil, fd, ph, tw, gf: 0.03 + r() * 0.015, gA: 6 + r() * 6, gph: r() * 300 };
 }
-function legacyBlk(q, K, seed, hwMin = 0.10) {
+const oldSpecs = {};
+const oldSpec = (key, seed, n, len, H) => oldSpecs[key] ?? (oldSpecs[key] = makeOldSpec(seed, n, len, H));
+
+/** chiselled block offset in [-0.5,0.5]: planar segments between integer nodes, joined by crisp jogs (narrow) or angled facets (wide) */
+function oldBlk(q, K, seed, hwMin = 0.10) {
   const j = Math.floor(q), fq = q - j;
   const j0 = K ? ((j % K) + K) % K : j, j1 = K ? (((j + 1) % K) + K) % K : j + 1;
   const o0 = hsh(j0 * 131 + seed) - 0.5, o1 = hsh(j1 * 131 + seed) - 0.5;
@@ -110,37 +156,52 @@ function legacyBlk(q, K, seed, hwMin = 0.10) {
   const lin = clamp((fq - 0.5 + hw) / (2 * hw));
   return o0 + (o1 - o0) * (lin * 0.85 + lin * lin * (3 - 2 * lin) * 0.15);
 }
-/** the previous first-riser plan position (m past the wall foot) at one point along the wall */
-function legacyFoot(l, along, wx, wz, circ) {
-  const gq = circ > 0 ? N.n2(Math.cos(along / circ * TAU) * circ * l.gf + l.gph, Math.sin(along / circ * TAU) * circ * l.gf + 3.7) : N.n2(along * l.gf + l.gph, 11.3);
+
+/** s: plan distance past the wall foot (m); along: arc/axis coordinate (m); circ>0 makes the along axis periodic */
+function oldCliff(s, along, wx, wz, sp, circ) {
+  if (s < -8) return 0;
+  // vertical gullies: V-shaped notches, depth growing upward
+  const gq = circ > 0 ? N.n2(Math.cos(along / circ * TAU) * circ * sp.gf + sp.gph, Math.sin(along / circ * TAU) * circ * sp.gf + 3.7) : N.n2(along * sp.gf + sp.gph, 11.3);
   const gg = Math.max(0, 1 - Math.abs(gq) * 5.2);
-  const gdepth = gg * gg * l.gA * (0.5 + 0.5 * N.n2(along * 0.017 + 5.5, l.gph));
-  let p = l.p0 + l.jogA * (circ > 0 ? N.n2(wx * l.jogF + l.ph, wz * l.jogF) : N.n2(along * l.jogF + l.ph, 0.5));
-  const K = circ > 0 ? Math.max(3, Math.round(circ / l.blen)) : 0;
-  p += l.bamp * 2 * legacyBlk(K ? (along / circ) * K : along / l.blen, K, l.seed * 7);
-  const K2 = circ > 0 ? Math.max(6, Math.round(circ / (l.blen * 0.48))) : 0;
-  p += l.bamp * 0.30 * legacyBlk(K2 ? (along / circ) * K2 : along / (l.blen * 0.48), K2, l.seed * 11 + 5, 0.24);
-  return p + gdepth * 0.385;
-}
-const LEG_OFFS = [-15, -7.5, 0, 7.5, 15];
-function smoothLegacyFoot(l, along, wx, wz, circ) {
-  let a = 0;
-  for (let k = 0; k < 5; k++) a += legacyFoot(l, along + LEG_OFFS[k], wx, wz, circ);
-  return a * 0.2;
+  const gdepth = gg * gg * sp.gA * (0.5 + 0.5 * N.n2(along * 0.017 + 5.5, sp.gph));
+  let f = 0;
+  const n = sp.n;
+  for (let i = 0; i < n; i++) {
+    const u = i / (n - 1 || 1);
+    // slow in/out drift of this ledge edge
+    let p = sp.p[i] + sp.jogA[i] * (circ > 0 ? N.n2(wx * sp.jogF[i] + sp.ph[i], wz * sp.jogF[i]) : N.n2(along * sp.jogF[i] + sp.ph[i], 2.1 * i + 0.5));
+    // chiselled blocks (two scales)
+    const bl = sp.blen[i];
+    const K = circ > 0 ? Math.max(3, Math.round(circ / bl)) : 0;
+    const q = (K ? (along / circ) * K : along / bl) + i * 0.37;
+    p += sp.bamp[i] * 2 * oldBlk(q, K, sp.seed * 7 + i * 53);
+    const K2 = circ > 0 ? Math.max(6, Math.round(circ / (bl * 0.48))) : 0;
+    const pBig = p;
+    p += sp.bamp[i] * 0.30 * oldBlk(K2 ? (along / circ) * K2 : along / (bl * 0.48) + i * 0.61, K2, sp.seed * 11 + i * 71 + 5, 0.24);
+    p += gdepth * (0.35 + 0.65 * u) * 1.1;
+    const w = sp.run[i];
+    const lin = clamp((s - p) / w);
+    const t = lin * 0.45 + lin * lin * (3 - 2 * lin) * 0.55;          // steep face, crisp shoulders
+    f += sp.rise[i] * t;
+    // snow / scree bank at the riser foot: smooth C1 falloff measured from the calm (big-block) edge, so it never saw-tooths
+    if (s < p + w) { const dd = Math.max(0, pBig - s) / sp.fd[i]; f += sp.rise[i] * sp.fil[i] * Math.exp(-dd * dd * 0.8 - dd * 0.35) * (1 - t); }
+    else if (s > p + w + 40) { f += sp.suf[i + 1]; break; }
+  }
+  return f;
 }
 
 function makeSpec(seed, n, len, H) {
   const r = rng(seed * 977 + 11);
-  const T = H < 22 ? 1 : H < 58 ? 2 : 3;
+  // one big face for the low masses, a big face crowned by one smaller step for the tall ones: never a stack of terraces
+  const T = H < 46 ? 1 : 2;
   let rise;
   if (T === 1) rise = [1];
-  else if (T === 2) { const a = 0.54 + 0.16 * r(); rise = [a, 1 - a]; }
-  else { const a = 0.40 + 0.14 * r(), b = 0.22 + 0.10 * r(); rise = [a, b, 1 - a - b]; }
+  else { const a = 0.72 + 0.10 * r(); rise = [a, 1 - a]; }
   const a = [], sl = [], w = [], fil = [], fd = [], k1 = [], ph = [];
   let wsum = 0;
   for (let i = 0; i < T; i++) {
     const top = i === T - 1;
-    a.push(top ? 0.78 + 0.10 * r() : 0.84 + 0.08 * r());                     // share of the tier's rise carried by the steep face (the rest is the snow bench)
+    a.push(top ? 0.89 + 0.06 * r() : 0.86 + 0.07 * r());                     // share of the tier's rise carried by the steep face (the rest is the snow bench)
     sl.push(i === 0 ? 3.6 + 1.8 * r() : 4.4 + 2.2 * r());                   // mean face slope (rise / run)
     w.push(Math.max(2.4, a[i] * rise[i] * H / sl[i]));
     wsum += w[i];
@@ -163,16 +224,17 @@ function makeSpec(seed, n, len, H) {
     T, n, len, seed, rise, a, sl, w, p, B, fil, fd, k1, ph,
     L1, A1: Math.min(10, 2.2 + len * 0.08) * (0.7 + 0.5 * r()),            // big planar facets: segment length / amplitude
     L2: L1 * (0.38 + 0.15 * r()), A2: 1.6 + 1.6 * r(),                     // a second, smaller swing so facets never repeat
+    L3: 84 + 64 * r(),                                                       // how often the first face's lip rises / sinks along the wall
     GL: 62 + 40 * r(), GD: 2.5 + 4.0 * r(),                                 // broad erosion scoops: spacing / depth
     s1: seed * 7 + 3, s2: seed * 11 + 5, s3: seed * 13 + 7,
-    leg: legacySpec(seed, n, len, H),
+    leg: makeOldSpec(seed, n, len, H),
   };
 }
 const specs = {};
 const spec = (key, seed, n, len, H) => specs[key] ?? (specs[key] = makeSpec(seed, n, len, H));
 
 /** rounded polyline: random node values in [-1,1] joined by straight segments (planar facets) with parabolic corner rounding of radius r (node units) */
-function facetWave(q, K, seed, r = 0.34) {
+function facetWave(q, K, seed, r = 0.46) {
   const j = Math.floor(q), fq = q - j;
   const v = (m) => hsh((K ? ((m % K) + K) % K : m) * 131 + seed) * 2 - 1;
   const v0 = v(j - 1), v1 = v(j), v2 = v(j + 1), v3 = v(j + 2);
@@ -198,59 +260,71 @@ function scoops(along, circ, sp) {
 }
 const sm01 = (x) => { x = x < 0 ? 0 : x > 1 ? 1 : x; return x * x * (3 - 2 * x); };
 
-/** set by heightAt when the caller wants the lip depth (vertex building): fraction of H between this point and the lip of its tier (negative above it) */
-let WANT_LIP = false, CD = 0, CW = 1, ACT = 0, TACT = 0;
-const _P = new Float64Array(4);
-/** height fraction at plan distance s for the tier faces whose plan positions are P (m); ACT = the active tier (the highest one whose face has started) */
-const _B = new Float64Array(4);
+/** set by heightAt when the caller wants the lip data (vertex building): WANT_LIP switches the extra work on; cliff() then leaves CL = height fraction of the
+ *  lip of the face this point belongs to and CF = height fraction of that face (both blended smoothly across tiers) */
+let WANT_LIP = false, CL = 0, CF = 0;
+// per-call scratch: tier foot positions (m), bench widths, rise shares and face widths for the wall being evaluated
+const _P = new Float64Array(4), _B = new Float64Array(4), _R = new Float64Array(4), _W = new Float64Array(4);
+/** height fraction at plan distance s for the tier faces whose plan positions are P (m) */
 function profile(s, sp, P) {
   let f = 0;
-  ACT = 0;
   for (let i = 0; i < sp.T; i++) {
-    const p = P[i], wf = sp.w[i], x = (s - p) / wf;
+    const p = P[i], wf = _W[i], x = (s - p) / wf;
     const t = x <= 0 ? 0 : x >= 1 ? 1 : 0.1 * x + 0.9 * x * x * (3 - 2 * x);               // rounded toe, steep middle, soft shoulder
     const a = sp.a[i];
-    f += sp.rise[i] * a * t;
+    f += _R[i] * a * t;
     // snow bench behind the lip: rises gently (and flattens) up to the next tier's foot / the plateau
-    f += sp.rise[i] * (1 - a) * sm01((s - (p + wf * 0.85)) / _B[i]);
+    f += _R[i] * (1 - a) * sm01((s - (p + wf * 0.85)) / _B[i]);
     // snow / scree bank at the face foot: smooth C1 falloff (same line as the face, so it never saw-tooths)
     if (s < p + wf) { const dd = Math.max(0, p - s) / sp.fd[i]; f += sp.fil[i] * Math.exp(-dd * dd * 0.8 - dd * 0.35) * (1 - t); }
-    if (i === 0 || t > 0) { ACT = i; TACT = t; }
   }
   return f;
 }
 
 /** s: plan distance past the wall foot (m); along: arc/axis coordinate (m); circ>0 makes the along axis periodic */
 function cliff(s, along, wx, wz, sp, circ) {
-  CD = 0; CW = 0;
+  CL = 0; CF = 0;
   if (s < -8) return 0;
   const T = sp.T;
   const K1 = circ > 0 ? Math.max(4, Math.round(circ / sp.L1)) : 0, K2 = circ > 0 ? Math.max(6, Math.round(circ / sp.L2)) : 0;
   const w1 = facetWave(K1 ? along / circ * K1 : along / sp.L1, K1, sp.s1);
   const w2 = facetWave(K2 ? along / circ * K2 + 0.37 : along / sp.L2 + 0.37, K2, sp.s2);
   const sc = scoops(along, circ, sp);
+  // the first face's lip rolls up and down along the wall (the crown step takes up the slack), so tier lines never run level like contours
+  if (T === 2) {
+    const K3 = circ > 0 ? Math.max(2, Math.round(circ / sp.L3)) : 0;
+    const lw = facetWave(K3 ? along / circ * K3 : along / sp.L3, K3, sp.s3 + 17, 0.45);
+    _R[0] = clamp(sp.rise[0] * (1 + 0.10 * lw), 0.6, 0.94); _R[1] = 1 - _R[0];
+  } else _R[0] = 1;
   // tier-0 foot = the old first-riser line (smoothed along the wall) + a small facet swing; the rest of the stack is squeezed / stretched so the plateau starts where it did
-  const P0 = clamp(smoothLegacyFoot(sp.leg, along, wx, wz, circ), 4, sp.len * 0.55) + 0.35 * (sp.A1 * sp.k1[0] * w1 + sp.A2 * w2) + 0.2 * sc;
+  const P0 = clamp(smoothLegacyFoot(sp.leg, along, wx, wz, circ), 4, sp.len * 0.55) + 0.30 * (sp.A1 * sp.k1[0] * (0.5 + 0.5 * w1) + sp.A2 * (0.5 + 0.5 * w2)) + 0.2 * sc;
   const kS = clamp((sp.len - 3 - P0) / Math.max(sp.len - 3 - sp.p[0], 4), 0.35, 2.5);
-  _P[0] = P0; _B[0] = sp.B[0] * kS;
-  for (let i = 1; i < T; i++) {
-    const u = i / (T - 1);
-    _P[i] = P0 + (sp.p[i] - sp.p[0]) * kS + sp.A1 * sp.k1[i] * w1 + sp.A2 * w2 + sc * (0.35 + 0.65 * u);
-    _B[i] = sp.B[i] * kS;
+  // the face's lean changes from plane to plane along the wall (some stand near-vertical, some lie back): lit and shaded planes of different weight
+  const wl = facetWave(circ > 0 ? along / circ * Math.max(3, Math.round(circ / (sp.L1 * 1.3))) : along / (sp.L1 * 1.3) + 0.2, circ > 0 ? Math.max(3, Math.round(circ / (sp.L1 * 1.3))) : 0, sp.s2 + 59);
+  _W[0] = sp.w[0] * (1 + 0.34 * wl); _W[1] = sp.w[1] * (1 + 0.2 * wl);
+  _P[0] = P0;
+  if (T === 2) {
+    // the crown step has a plan line of its own (partly echoing the first face, partly independent) and sits back by a different amount from place to place
+    const w1b = facetWave(K1 ? along / circ * K1 + 0.5 : along / (sp.L1 * 0.8) + 0.5, K1, sp.s1 + 101);
+    _P[1] = P0 + (sp.p[1] - sp.p[0]) * kS + sp.A1 * (0.30 * sp.k1[1] * w1 + 0.80 * w1b) + sp.A2 * w2 * 0.6 + sc;
+    _B[0] = Math.max(_P[1] - (P0 + 0.85 * _W[0]), 2.5);                        // the lower snow bench runs right up to the crown step's foot
   }
+  // the last bench always tops out at the same plan distance (len - 3) however the facet lines swing: the plateau of a mesa is then dead calm instead of
+  // fanning out in radial ripples around its centre (where the along coordinate gets compressed)
+  _B[T - 1] = Math.max(sp.len - 3 - (_P[T - 1] + 0.85 * _W[T - 1]), 3);
   const f = profile(s, sp, _P);
   if (WANT_LIP) {
     // lip height (as a fraction of H): the first tier's lip, blending smoothly into each next tier's lip across the bench behind the previous one,
     // so it never jumps where the active tier changes (a jump interpolated over one cell would draw saw teeth along the snow cap)
-    let Lf = 0, prev = 0;
+    let Lf = 0, prev = 0, Ff = 0, prevF = 0;
     for (let k = 0; k < T; k++) {
-      const lk = profile(_P[k] + 0.9 * sp.w[k], sp, _P);
-      if (k === 0) Lf = lk;
-      else { const sPrev = _P[k - 1] + 0.9 * sp.w[k - 1]; Lf += (lk - prev) * sm01((s - sPrev) / Math.max(_P[k] - sPrev, 3)); }
-      prev = lk;
+      const lk = profile(_P[k] + 0.9 * _W[k], sp, _P), fk = _R[k] * sp.a[k];
+      if (k === 0) { Lf = lk; Ff = fk; }
+      else { const wk = sm01((s - (_P[k - 1] + 0.9 * _W[k - 1])) / Math.max(_P[k] - (_P[k - 1] + 0.9 * _W[k - 1]), 3)); Lf += (lk - prev) * wk; Ff += (fk - prevF) * wk; }
+      prev = lk; prevF = fk;
     }
-    CD = Lf - f;
-    CW = 1;
+    CL = Lf;                                     // height fraction of the lip this point belongs to
+    CF = Ff;                                     // height of the face this point belongs to (fraction of H), blended the same way: the snow cap scales with it
   }
   return f;
 }
@@ -379,6 +453,20 @@ for (const p of PADS) {
     for (let i = Math.floor((p[0] - p[2] - 10) / PAD_CELL); i <= Math.floor((p[0] + p[2] + 10) / PAD_CELL); i++) {
       const k = i * 4096 + j; const a = padGrid.get(k); if (a) a.push(p); else padGrid.set(k, [p]);
     }
+}
+/** 0 = free ground, -> 1 on / beside a rigid prop's footprint (2 m margin, 8 m ramp): the old cliff profile is blended in there so the ground under it stays where it was */
+function padLock(x, z) {
+  const list = padGrid.get(Math.floor(x / PAD_CELL) * 4096 + Math.floor(z / PAD_CELL));
+  if (!list) return 0;
+  let k = 0;
+  for (let i = 0; i < list.length; i++) {
+    const p = list[i];
+    const qx = Math.abs(x - p[0]) - p[2] - 2, qz = Math.abs(z - p[1]) - p[3] - 2;
+    if (qx > 8 || qz > 8) continue;
+    const d = Math.hypot(Math.max(qx, 0), Math.max(qz, 0)) + Math.min(Math.max(qx, qz), 0);
+    k = Math.max(k, 1 - sstep(0, 8, d));
+  }
+  return k;
 }
 /** 1 = free ground, -> 0 next to a rigid prop */
 function padCalm(x, z) {
@@ -644,7 +732,7 @@ function farRelief(x, z, aux, wf) {
       const fr = cliff(sM, (Math.atan2(v, u) / TAU + 0.5) * circ, x, z, sp, circ);
       const hm = m[5] * fr;
       if (hm > h) h = hm;
-      if (aux) noteAux(aux, sp, fr, hm * wf, m[5] * wf);
+      if (aux) noteAux(aux, sp, fr, hm * wf, m[5] * wf * (CL - fr), m[5] * wf * CF);
     }
   }
   return base + h;
@@ -658,11 +746,12 @@ function gateFlat(x, z) {
 
 
 // ── per-vertex layer coordinate: lets the terrain shader paint strata that follow the modelled ledges ──────────────────
-function noteAux(aux, sp, f, w, Hm = w) {
-  if (w > aux.w) { aux.w = w; aux.sp = sp; aux.f = f; aux.H = Hm; }
+/** dm = metres between this point and the lip of its face, fm = height of that face in metres (both worked out by the caller, who knows how the wall is added to the ground) */
+function noteAux(aux, sp, f, w, dm, fm) {
+  if (w > aux.w) { aux.w = w; aux.sp = sp; aux.f = f; }
   // lip depth is a weighted blend over all walls that touch this point (overlapping mesas: no jump where the dominant one changes)
   const q = w * w, q4 = q * q;
-  aux.sw += q4; aux.sd += q4 * CD * Hm;
+  aux.sw += q4; aux.sd += q4 * dm; aux.sf += q4 * fm;
 }
 // rim: the outer frame's top edge rolls up and down instead of running dead straight; rocky buttes crown the rim
 const RIMB = [];
@@ -705,7 +794,7 @@ function rimButtes(x, z, aux) {
       const circ = TAU * rs * 1.1;
       const f = cliff(sM, (Math.atan2(v, u) / TAU + 0.5) * circ, x, z, sp, circ);
       const hm = m[5] * f;
-      if (aux) noteAux(aux, sp, f, hm * 1.5, m[5]);
+      if (aux) noteAux(aux, sp, f, hm * 1.5, m[5] * (CL - f), m[5] * CF);
       if (hm > h) h = hm;
     }
   }
@@ -714,14 +803,14 @@ function rimButtes(x, z, aux) {
 
 export function heightAt(x, z, aux) {
   WANT_LIP = !!aux;
-  if (aux) { aux.w = 0; aux.sp = null; aux.f = 0; aux.H = 0; aux.d = 0; aux.sw = 0; aux.sd = 0; }
+  if (aux) { aux.w = 0; aux.sp = null; aux.f = 0; aux.H = 0; aux.d = 0; aux.sw = 0; aux.sd = 0; aux.sf = 0; }
   const flat = sstep(150, 138, z) * sstep(28, 40, z) * sstep(190, 170, Math.abs(x));
   const entrance = sstep(140, 175, z);
   // the approach corridor (spawn → viaduct gateway) keeps a readable, gently falling line of sight
   const corr = sstep(62, 18, Math.abs(x - 2)) * sstep(135, 178, z) * sstep(292, 268, z);
   const gf = gateFlat(x, z);
-  let h = duneMacro(x, z) * (1 - 0.72 * corr) * (0.32 + 0.68 * entrance) * (1 - 0.88 * flat) * gf
-        + duneDetail(x, z) * (1 - 0.25 * corr) * (0.62 + 0.38 * entrance) * (1 - 0.6 * flat) * gf;
+  const hMac = duneMacro(x, z) * (1 - 0.72 * corr) * (0.32 + 0.68 * entrance) * (1 - 0.88 * flat) * gf;      // the slow swells alone (the lip data of mesas leans on this smooth part)
+  let h = hMac + duneDetail(x, z) * (1 - 0.25 * corr) * (0.62 + 0.38 * entrance) * (1 - 0.6 * flat) * gf;
   h += 4.2 * Math.exp(-(((x - 2) / 38) ** 2 + ((z - 262) / 26) ** 2)) - 3.2 * corr * sstep(236, 205, z);
   // subtle wind-swell on the city plateau
   h += N.n2(x * 0.02, z * 0.03) * 0.5 * flat;
@@ -779,7 +868,12 @@ export function heightAt(x, z, aux) {
     if (k > 0) h = lerp(h, Math.min(h, 1.5 + 0.35 * N.n2(x * 0.08 + 3, z * 0.08)), 0.85 * k);
   }
   const cm = sstep(32, -2, z);
-  h += canyonFloor(z);
+  const lock = padLock(x, z);
+  const fl = canyonFloor(z);
+  h += fl;
+  // smooth ground height (slow swells + canyon floor): the lip heights handed to the shader are built from it, so hummocks / lumps / drifts at a vertex never
+  // jitter the snow-cap line (a lip line that jitters at cell scale draws vertical streaks down the face)
+  const hSm = hMac + fl;
   if (cm > 0) {
     const warp = N.n2(x * 0.03, z * 0.03) * 3.2 + N.n2(x * 0.06, z * 0.06) * 1.0;
     const side = x < cx ? 0 : 1;
@@ -789,11 +883,15 @@ export function heightAt(x, z, aux) {
     if (s > -16 && z > -196) h += cm * talus(s, z, side) * gateFlat(x, z);
     if (s > -8) {
       const sp = spec('c' + side, 40 + side, 6, 66, PLATEAU_H - 8);
-      const fc = cliff(s, z, x, z, sp, 0);
-      h += cm * (PLATEAU_H - 8) * fc * (0.96 + 0.04 * N.n2(x * 0.05, z * 0.05));
-      if (aux) noteAux(aux, sp, fc, cm * (PLATEAU_H - 8) * fc, PLATEAU_H - 8);
-      // scree apron at the wall foot (cones under the old gullies): kept at about half strength, the tier profile adds its own foot bank
-      h += cm * 0.55 * (1.2 + 1.8 * (0.5 + 0.5 * N.n2(z * 0.045 + side * 9, 3.3))) * sstep(-6, 4, s) * (1 - sstep(4, 16, s));
+      let fc = cliff(s, z, x, z, sp, 0);
+      const kc = cm * (PLATEAU_H - 8) * (0.96 + 0.04 * N.n2(x * 0.05, z * 0.05));
+      const lk = lock > 0 ? lock : 0;
+      const wAux = cm * (PLATEAU_H - 8) * fc, lipC = hSm + kc * CL, cfC = kc * CF;
+      if (lk > 0) fc += (oldCliff(s, z, x, z, sp.leg, 0) - fc) * lk;
+      h += kc * fc;
+      if (aux) noteAux(aux, sp, fc, wAux, lipC - h, cfC);
+      // scree apron at the wall foot (cones under the old gullies): about half strength in the open (the tier profile adds its own foot bank), full strength under props
+      h += cm * (0.55 + 0.45 * lk) * (1.2 + 1.8 * (0.5 + 0.5 * N.n2(z * 0.045 + side * 9, 3.3))) * sstep(-6, 4, s) * (1 - sstep(4, 16, s));
     }
   }
 
@@ -815,9 +913,13 @@ export function heightAt(x, z, aux) {
       const sp = spec('m' + i, m[7], m[6], len, m[5]);
       const ang = Math.atan2(v, u);
       const circ = TAU * rs * 1.1;
-      const fm = cliff(sM, (ang / TAU + 0.5) * circ, x, z, sp, circ);
-      h += m[5] * fm;
-      if (aux) noteAux(aux, sp, fm, m[5] * fm, m[5]);
+      let fm = cliff(sM, (ang / TAU + 0.5) * circ, x, z, sp, circ);
+      // the wind dunes underneath are damped across the mass, so a mesa reads as a calm, flat-topped block with a rolling snow cap, not as a lumpy hill
+      const damp = 0.7 * sm01((fm - 0.1) / 0.5);
+      const wAux = m[5] * fm, lipM = hSm * (1 - 0.7 * sm01((CL - 0.1) / 0.5)) + m[5] * CL, cfM = m[5] * CF;
+      if (lock > 0) fm += (oldCliff(sM, (ang / TAU + 0.5) * circ, x, z, sp.leg, circ) - fm) * lock;
+      h = h * (1 - damp * (1 - lock)) + m[5] * fm;
+      if (aux) noteAux(aux, sp, fm, wAux, lipM - h, cfM);
     }
   }
 
@@ -830,10 +932,12 @@ export function heightAt(x, z, aux) {
   if (b > -8) {
     const sp = spec('f', 77, 6, 74, 60);
     const along = bx >= Math.max(bzs, bzn) ? z * 1 + (x < 0 ? 0 : 500) : x + (bzs > bzn ? 1000 : 1500);
-    const ff = cliff(b, along, x, z, sp, 0);
+    let ff = cliff(b, along, x, z, sp, 0);
     // the wall top rolls (long swells + notches) rather than being a straight plateau line
-    h = lerp(h, PLATEAU_H + rimShape(x, z), clamp(ff));
-    if (aux) noteAux(aux, sp, ff, 60 * clamp(ff), 60);
+    const top = PLATEAU_H + rimShape(x, z), wAux = 60 * clamp(ff), lipF = hSm + (top - hSm) * clamp(CL), cfF = (top - hSm) * clamp(CF);
+    if (lock > 0) ff += (oldCliff(b, along, x, z, sp.leg, 0) - ff) * lock;
+    h = lerp(h, top, clamp(ff));
+    if (aux) noteAux(aux, sp, ff, wAux, lipF - h, cfF);
     if (b > 60) h += rimButtes(x, z, aux) * clamp((ff - 0.9) * 10);
   }
 
@@ -844,7 +948,7 @@ export function heightAt(x, z, aux) {
   }
 
   h += footprintField(x, z).drift;
-  if (aux) aux.d = aux.sw > 0 ? aux.sd / aux.sw : 0;
+  if (aux) { aux.d = aux.sw > 0 ? aux.sd / aux.sw : 0; aux.fh = aux.sw > 0 ? aux.sf / aux.sw : 0; }
   return h;
 }
 
@@ -897,14 +1001,15 @@ function buildChunk(cx, cz, lod) { return buildGrid(cx * CHUNK, cz * CHUNK, CHUN
 function buildGrid(x0, z0, size, segs, R, skirt, withTex = false) {
   const step = size / segs;
   const n = segs + 1, P = 5, pn = n + 2 * P;
-  const H = new Float32Array(pn * pn), LCs = new Float32Array(pn * pn), DEP = new Float32Array(pn * pn);
-  const aux = { w: 0, sp: null, f: 0, H: 0, d: 0, sw: 0, sd: 0 };
+  const H = new Float32Array(pn * pn), LCs = new Float32Array(pn * pn), DEP = new Float32Array(pn * pn), FHs = new Float32Array(pn * pn);
+  const aux = { w: 0, sp: null, f: 0, H: 0, d: 0, sw: 0, sd: 0, sf: 0, fh: 0 };
   for (let j = 0; j < pn; j++)
     for (let i = 0; i < pn; i++) {
       const k = j * pn + i;
       H[k] = heightAt(x0 + (i - P) * step, z0 + (j - P) * step, aux);
       LCs[k] = aux.sp ? H[k] + aux.d : -999;      // world height of the lip of the face this vertex belongs to (smooth along the wall)
-      DEP[k] = aux.sp ? clamp(aux.d, -60, 60) : -60;   // the same as metres below the lip: goes into the node texture (C2-smooth per pixel, no per-triangle teeth)
+      DEP[k] = aux.sp ? H[k] + aux.d : H[k] - 80;      // lip height again, for the node texture (C2-smooth per pixel; the shader subtracts the exact per-pixel y, so near-vertical faces get a clean horizontal cap line, no vertical streaks)
+      FHs[k] = aux.sp ? aux.fh : 0;                // height (m) of the rock face this vertex belongs to: the snow cap on its lip scales with it   // the same as metres below the lip: goes into the node texture (C2-smooth per pixel, no per-triangle teeth)
     }
   // per-point gradient on the padded grid (indices 2..pn-3), blending 1- and 2-cell central differences
   const GX = new Float32Array(pn * pn), GZ = new Float32Array(pn * pn), RM = new Float32Array(pn * pn);
@@ -934,7 +1039,7 @@ function buildGrid(x0, z0, size, segs, R, skirt, withTex = false) {
   const curvK = clamp(Math.round(2.4 / step), 1, 5), curvS = clamp(Math.round(1.3 / step), 1, 5), curvM = clamp(Math.round(3.6 / step), 1, 5);
 
   const verts = n * n + 4 * n;
-  const pos = new Float32Array(verts * 3), nor = new Float32Array(verts * 3), col = new Float32Array(verts * 3), tr = new Float32Array(verts * 4);
+  const pos = new Float32Array(verts * 3), nor = new Float32Array(verts * 3), col = new Float32Array(verts * 3), tr = new Float32Array(verts * 4), fh = new Float32Array(verts);
   const c = new THREE.Color();
   const hasFoot = FOOTPRINTS.length > 0;
   for (let j = 0; j < n; j++) {
@@ -962,7 +1067,7 @@ function buildGrid(x0, z0, size, segs, R, skirt, withTex = false) {
       // curvature (concave hollows / convex lips) at ~2.4m scale drives painted tint + cavity shading
       const kk = curvK;
       const lap = (H[c0 + kk] + H[c0 - kk] + H[c0 + kk * pn] + H[c0 - kk * pn] - 4 * h) / (kk * step * kk * step);
-      tr[k * 4] = RB[c0]; tr[k * 4 + 1] = 1 - 0.3 * ao; tr[k * 4 + 2] = clamp(lap * 0.3, -1, 1); tr[k * 4 + 3] = LCs[c0];
+      tr[k * 4] = RB[c0]; tr[k * 4 + 1] = 1 - 0.3 * ao; tr[k * 4 + 2] = clamp(lap * 0.3, -1, 1); tr[k * 4 + 3] = LCs[c0]; fh[k] = FHs[c0];
 
     }
   }
@@ -977,14 +1082,17 @@ function buildGrid(x0, z0, size, segs, R, skirt, withTex = false) {
     pos[sv * 3] = pos[e * 3]; pos[sv * 3 + 1] = pos[e * 3 + 1] - skirt; pos[sv * 3 + 2] = pos[e * 3 + 2];
     nor[sv * 3] = nor[e * 3]; nor[sv * 3 + 1] = nor[e * 3 + 1]; nor[sv * 3 + 2] = nor[e * 3 + 2];
     col[sv * 3] = col[e * 3]; col[sv * 3 + 1] = col[e * 3 + 1]; col[sv * 3 + 2] = col[e * 3 + 2];
-    tr[sv * 4] = tr[e * 4]; tr[sv * 4 + 1] = tr[e * 4 + 1]; tr[sv * 4 + 2] = tr[e * 4 + 2]; tr[sv * 4 + 3] = tr[e * 4 + 3];
+    tr[sv * 4] = tr[e * 4]; tr[sv * 4 + 1] = tr[e * 4 + 1]; tr[sv * 4 + 2] = tr[e * 4 + 2]; tr[sv * 4 + 3] = tr[e * 4 + 3]; fh[sv] = fh[e];
     sv++;
   }
   const idx = [];
   for (let j = 0; j < segs; j++)
     for (let i = 0; i < segs; i++) {
       const a = j * n + i, b = a + 1, d = a + n, e = d + 1;
-      idx.push(a, d, b, b, d, e);
+      // split every cell along the diagonal with the smaller height difference: contour lines on steep faces then follow the mesh instead of zig-zagging across it
+      const ha = H[(j + P) * pn + i + P], hb = H[(j + P) * pn + i + 1 + P], hd = H[(j + 1 + P) * pn + i + P], he = H[(j + 1 + P) * pn + i + 1 + P];
+      if (Math.abs(ha - he) < Math.abs(hb - hd)) idx.push(a, d, e, a, e, b);
+      else idx.push(a, d, b, b, d, e);
     }
   // skirt quads along the ring of edge vertices
   const ring = edges.length;
@@ -1022,6 +1130,7 @@ function buildGrid(x0, z0, size, segs, R, skirt, withTex = false) {
   g.setAttribute('normal', new THREE.BufferAttribute(nor, 3));
   g.setAttribute('color', new THREE.BufferAttribute(col, 3));
   g.setAttribute('tr', new THREE.BufferAttribute(tr, 4));
+  g.setAttribute('fh', new THREE.BufferAttribute(fh, 1));
   g.setIndex(idx);
   g.computeBoundingSphere();
   return g;
@@ -1031,7 +1140,6 @@ function buildGrid(x0, z0, size, segs, R, skirt, withTex = false) {
 function farSegs(fx, fz, FS) {
   let m = 0;
   const n = 8, st = FS / n;
-  let prev = null;
   const row = [];
   for (let j = 0; j <= n; j++) {
     for (let i = 0; i <= n; i++) {
@@ -1071,10 +1179,10 @@ export class Terrain {
       for (let i = 0; i < nf; i++) {
         const fx = f0 + i * FS, fz = f0 + j * FS;
         if (fx >= -384 - 1 && fx + FS <= 384 + 1 && fz >= -384 - 1 && fz + FS <= 384 + 1) continue;
-        const mesh = new THREE.Mesh(new THREE.BufferGeometry(), terrainMaterial);
+        const mesh = new THREE.Mesh(new THREE.BufferGeometry(), makeTerrainMaterial());      // own material: each far tile binds its own gradient texture
         mesh.visible = false;
         mesh.receiveShadow = false;
-        mesh.onBeforeRender = bindNormalTexture;          // far tiles carry no gradient texture: switches the smooth-normal path off for them
+        mesh.onBeforeRender = bindNormalTexture;
         this.group.add(mesh);
         this.far.push({ fx, fz, FS, mesh });
       }
@@ -1092,7 +1200,7 @@ export class Terrain {
   buildFar() {
     for (const f of this.far) {
       if (f.built) continue;
-      f.mesh.geometry = buildGrid(f.fx, f.fz, f.FS, farSegs(f.fx, f.fz, f.FS), 1, 14);
+      f.mesh.geometry = buildGrid(f.fx, f.fz, f.FS, farSegs(f.fx, f.fz, f.FS), 1, 14, true);
       f.mesh.visible = true;
       f.built = true;
     }
@@ -1134,7 +1242,7 @@ export class Terrain {
       if (performance.now() - slice > 30) { onProgress(n / total); await new Promise((r) => setTimeout(r, 0)); slice = performance.now(); }
     };
     for (const ch of todo) { ch.lod = ch.want; ch.mesh.geometry = this.geo(ch, ch.want); ch.mesh.visible = true; await tick(); }
-    for (const f of far) { f.mesh.geometry = buildGrid(f.fx, f.fz, f.FS, farSegs(f.fx, f.fz, f.FS), 1, 14); f.mesh.visible = true; f.built = true; await tick(); }
+    for (const f of far) { f.mesh.geometry = buildGrid(f.fx, f.fz, f.FS, farSegs(f.fx, f.fz, f.FS), 1, 14, true); f.mesh.visible = true; f.built = true; await tick(); }
   }
   update(p) {
     for (const ch of this.chunks.values()) {

@@ -12,7 +12,7 @@ export const PAL = {
   trim: 0xa0a5c3,
   metal: 0x444968,
   glass: 0x1c2347,
-  accent: 0xee7e72,          // coral red-orange (concept swatches #e1706d / #c85b5a), no hot orange
+  accent: 0xf28378,          // coral red-orange (concept swatches #e1706d / #c85b5a), no hot orange
   accentDark: 0xd0626a,      // darker red for the shaded / secondary panels
   rockBlue: 0x7a7fa6,
   rockRed: 0xe07468,
@@ -62,9 +62,10 @@ export const GRADE_GLSL = /* glsl */ `
     float rel = dot(reflectedLight.directDiffuse, vec3(0.3333)) / (dot(diffuseColor.rgb, vec3(0.3333)) * sunI + 1e-4);
     float litK = smoothstep(0.22, 0.55, rel);          // 0 in shadow .. 1 from the midtone upward
     float sunK = smoothstep(0.80, 1.0, rel);           // 1 in the full-sun band
-    vec3 shT = mix(gShade, vec3(0.050, 0.062, 0.100), gSnowA);
-    vec3 shA = mix(gShadeAbs, vec3(0.026, 0.032, 0.052), gSnowA);
-    vec3 og = outgoingLight + (diffuseColor.rgb * shT + shA) * (1.0 - litK);
+    vec3 shT = mix(gShade, vec3(0.062, 0.078, 0.112), gSnowA);
+    vec3 shA = mix(gShadeAbs, vec3(0.034, 0.040, 0.056), gSnowA);
+    vec3 shM = mix(gShadeMul, vec3(1.0), gSnowA);
+    vec3 og = outgoingLight * mix(shM, vec3(1.0), litK) + (diffuseColor.rgb * shT + shA) * (1.0 - litK);
     og *= mix(vec3(1.0), mix(gWarm, vec3(1.030, 1.0, 0.962), gSnowA), sunK);
     og *= mix(vec3(1.0), vec3(0.952, 0.974, 1.04), gSnowA * litK * (1.0 - sunK));
     outgoingLight = mix(outgoingLight, og, gGradeK);
@@ -79,17 +80,20 @@ uniform float uSnow;
 uniform float uSeams;
 uniform float uStrata;
 uniform float uSnowTh;
+uniform float uCover;
 uniform vec3 uBounce;
 uniform vec3 uDriftA;
 uniform vec3 uDriftB;
 uniform vec3 uShade;
 uniform vec3 uShadeAbs;
+uniform vec3 uShadeMul;
 uniform vec3 uWarm;
 float gSnowA = 0.0;
 float gGradeK = 1.0;
 float gLip = 1.0;
 vec3 gShade = vec3(0.0);
 vec3 gShadeAbs = vec3(0.0);
+vec3 gShadeMul = vec3(1.0);
 vec3 gWarm = vec3(1.0);
 ` + NOISE_GLSL;
 
@@ -106,9 +110,17 @@ const PAINT_GLSL = /* glsl */ `
     baseC *= mix(uDriftA, uDriftB, dr);
     // very slow light / shade washes (60-80 m soft patches, like cloud shadows drifting over the architecture)
     baseC *= 1.0 + (smoothstep(0.30, 0.70, vn(wp.xz * 0.013 + wp.y * 0.006 + 21.0)) - 0.5) * 0.11;
+    // painted patches: soft-edged planes of paint a step lighter / deeper (about 3-9 m), only legible up close; the colour block itself stays clean
+    {
+      float pa = vn(wp.xz * 0.21 + wp.y * 0.15 + 31.0) * 0.62 + vn(wp.xz * 0.55 + wp.y * 0.38 + 5.0) * 0.38;
+      float pk = smoothstep(0.40, 0.60, pa) - 0.5;
+      float nearK = 1.0 - smoothstep(14.0, 70.0, camD);
+      baseC *= 1.0 + pk * 0.075 * nearK;
+      baseC *= mix(vec3(1.0), pk > 0.0 ? vec3(1.012, 0.998, 0.982) : vec3(0.985, 0.992, 1.018), abs(pk) * 1.6 * nearK);
+    }
     // soft vertical streaks on steep faces, only legible up close (water / snow-melt running down large panels)
-    float stk = vn(vec2(dot(wp.xz, vec2(0.83, 0.56)) * 0.85, wp.y * 0.07 + 2.0));
-    baseC *= 1.0 + (stk - 0.5) * 0.10 * vertK * (1.0 - smoothstep(25.0, 80.0, camD));
+    float stk = vn(vec2(dot(wp.xz, vec2(0.83, 0.56)) * 0.62, wp.y * 0.035 + 2.0));
+    baseC *= 1.0 + (stk - 0.5) * 0.085 * vertK * (1.0 - smoothstep(25.0, 80.0, camD));
     // height gradient: heavier / cooler near the ground, lighter and slightly warmer high up
     float hg = smoothstep(-2.0, 46.0, wp.y);
     baseC *= mix(0.88, 1.08, hg);
@@ -138,18 +150,23 @@ const PAINT_GLSL = /* glsl */ `
     float wob = (vn(wp.xz * 1.9 + wp.y * 1.4 + 11.0) - 0.5) * 0.30 * (1.0 - smoothstep(25.0, 90.0, camD)) + (vn(wp.xz * 5.3 + wp.y * 4.1 + 3.0) - 0.5) * 0.09 * (1.0 - smoothstep(12.0, 45.0, camD));
     float topK = vWN.y + wob;
     float fwT = fwidth(topK) * 0.8 + 0.012;
-    float snowA = smoothstep(uSnowTh - fwT, uSnowTh + fwT, topK) * uSnow;
+    // partial cover (decks, walkways): soft-edged drifted patches of snow over bare structure instead of an all-or-nothing blanket
+    float cvN = vn(wp.xz * 0.19 + 7.0) * 0.55 + vn(wp.xz * 0.61 + 19.0) * 0.30 + vn(wp.xz * 1.9 + 3.0) * 0.15;
+    float cov = uCover > 0.999 ? 1.0 : smoothstep(1.0 - uCover - 0.035, 1.0 - uCover + 0.035, cvN);
+    float snowA = smoothstep(uSnowTh - fwT, uSnowTh + fwT, topK) * uSnow * cov;
     gLip = smoothstep(uSnowTh, uSnowTh + 0.17, topK);
     gSnowA = snowA;
     // the thickness of the snow shows as a soft cool shadow just under its lip
     float under = smoothstep(uSnowTh - 0.34, uSnowTh - 0.04, topK) * (1.0 - smoothstep(uSnowTh - 0.04, uSnowTh + 0.02, topK));
-    baseC *= mix(vec3(1.0), vec3(0.84, 0.89, 0.99), under * 0.85 * uSnow);
+    baseC *= mix(vec3(1.0), vec3(0.84, 0.89, 0.99), under * 0.85 * uSnow * cov);
     float tn = vn(wp.xz * 0.05 + 40.0);
     vec3 snowC = mix(vec3(0.985, 0.985, 0.992), vec3(0.905, 0.94, 1.0), smoothstep(0.25, 0.75, tn) * 0.7);
+    snowC *= mix(vec3(0.925, 0.955, 1.025), vec3(1.0), gLip);          // rounded shoulder: the lip of the snow is a shade cooler / deeper than its crown
     vec3 snowVC = mix(vec3(dot(vColor.rgb, vec3(0.2126, 0.7152, 0.0722))), vColor.rgb, 0.35);      // snow keeps the baked value (AO), not the part's hue jitter
     diffuseColor.rgb = mix(baseC, snowC * snowVC, snowA);
     gShade = uShade;
     gShadeAbs = uShadeAbs;
+    gShadeMul = uShadeMul;
     gWarm = uWarm;
   }
 `;
@@ -181,11 +198,13 @@ function patchPaint(mat, o) {
     sh.uniforms.uSeams = { value: o.seams };
     sh.uniforms.uStrata = { value: o.strata };
     sh.uniforms.uSnowTh = { value: o.snowTh };
+    sh.uniforms.uCover = { value: o.cover };
     sh.uniforms.uBounce = { value: new THREE.Vector3(...o.bounce) };
     sh.uniforms.uDriftA = { value: new THREE.Vector3(...o.driftA) };
     sh.uniforms.uDriftB = { value: new THREE.Vector3(...o.driftB) };
     sh.uniforms.uShade = { value: new THREE.Vector3(...o.shade) };
     sh.uniforms.uShadeAbs = { value: new THREE.Vector3(...o.shadeAbs) };
+    sh.uniforms.uShadeMul = { value: new THREE.Vector3(...o.shadeMul) };
     sh.uniforms.uWarm = { value: new THREE.Vector3(...o.warm) };
     sh.vertexShader = sh.vertexShader
       .replace('#include <common>', '#include <common>\n' + VERT_PARS)
@@ -208,6 +227,7 @@ float gSnowA = 1.0;
 float gGradeK = 1.0;
 vec3 gShade = vec3(0.0);
 vec3 gShadeAbs = vec3(0.0);
+vec3 gShadeMul = vec3(1.0);
 vec3 gWarm = vec3(1.0);
 ` + NOISE_GLSL;
 const SNOW_GLSL = /* glsl */ `
@@ -234,17 +254,17 @@ function patchSnow(mat) {
 }
 
 // per-family colour behaviour
-const SLATE = { driftA: [0.945, 0.98, 1.065], driftB: [1.055, 1.0, 0.975], shade: [0.140, 0.105, 0.070], shadeAbs: [0.020, 0.018, 0.022], warm: [1.04, 1.0, 0.95], bounce: [0.060, 0.062, 0.075] };
-const CORAL = { driftA: [1.02, 1.14, 0.92], driftB: [0.96, 0.88, 1.06], shade: [0.150, 0.060, 0.095], shadeAbs: [0.050, 0.018, 0.032], warm: [1.02, 1.0, 0.97] };
-const ROCKRED = { driftA: [1.03, 1.10, 0.92], driftB: [0.96, 0.90, 1.05], shade: [0.155, 0.062, 0.100], shadeAbs: [0.050, 0.018, 0.034], warm: [1.03, 1.0, 0.96] };
-const ROCKBLUE = { driftA: [0.97, 0.99, 1.04], driftB: [1.03, 1.0, 0.99], shade: [0.130, 0.100, 0.075], shadeAbs: [0.020, 0.018, 0.026], warm: [1.03, 1.0, 0.96], bounce: [0.060, 0.062, 0.080] };
+const SLATE = { driftA: [0.94, 0.985, 1.07], driftB: [1.06, 0.965, 1.03], shade: [0.140, 0.105, 0.070], shadeAbs: [0.020, 0.018, 0.022], shadeMul: [0.90, 0.94, 0.98], warm: [1.06, 1.0, 0.93], bounce: [0.060, 0.062, 0.075] };
+const CORAL = { driftA: [1.02, 1.14, 0.92], driftB: [0.96, 0.88, 1.06], shade: [0.150, 0.060, 0.095], shadeAbs: [0.050, 0.018, 0.032], shadeMul: [0.94, 1.0, 1.0], warm: [1.02, 1.0, 0.97] };
+const ROCKRED = { driftA: [1.03, 1.10, 0.92], driftB: [0.96, 0.90, 1.05], shade: [0.125, 0.070, 0.105], shadeAbs: [0.030, 0.016, 0.040], shadeMul: [0.95, 1.02, 1.0], warm: [1.03, 1.0, 0.96] };
+const ROCKBLUE = { driftA: [0.97, 0.99, 1.04], driftB: [1.03, 1.0, 0.99], shade: [0.130, 0.100, 0.075], shadeAbs: [0.020, 0.018, 0.026], shadeMul: [0.92, 0.95, 1.0], warm: [1.03, 1.0, 0.96], bounce: [0.060, 0.062, 0.080] };
 
-function toon(color, { snow = 0, emissive = 0x000000, emissiveIntensity = 0, side, seams = 0, paint = true, strata = 0, snowTh = 0.69, ramp = RAMP, bounce, fam = SLATE } = {}) {
+function toon(color, { snow = 0, cover = 1, emissive = 0x000000, emissiveIntensity = 0, side, seams = 0, paint = true, strata = 0, snowTh = 0.69, ramp = RAMP, bounce, fam = SLATE } = {}) {
   const m = new THREE.MeshToonMaterial({
     color, gradientMap: ramp, vertexColors: true, emissive, emissiveIntensity,
   });
   if (side !== undefined) m.side = side;
-  if (paint) patchPaint(m, { snow, seams, strata, snowTh, ...fam, ...(bounce ? { bounce } : {}) });
+  if (paint) patchPaint(m, { snow, cover, seams, strata, snowTh, ...fam, ...(bounce ? { bounce } : {}) });
   return m;
 }
 
@@ -255,11 +275,11 @@ export const MAT = {
   wallDark: toon(PAL.wallDark, { snow: 0.0, seams: 1 }),
   trim: toon(PAL.trim, { snow: 1, seams: 1, snowTh: 0.56 }),
   metal: toon(PAL.metal, { snow: 0.9, snowTh: 0.6 }),
-  deck: toon(0x666c92, { seams: 1 }),
+  deck: toon(0x666c92, { seams: 1, snow: 1, snowTh: 0.7, cover: 0.42 }),
   accent: toon(PAL.accent, { snow: 0.85, snowTh: 0.62, bounce: [0.15, 0.05, 0.035], fam: CORAL }),
   accentDark: toon(PAL.accentDark, { snow: 0.85, snowTh: 0.62, bounce: [0.15, 0.05, 0.05], fam: CORAL }),
   glass: toon(PAL.glass, { emissive: 0x26356f, emissiveIntensity: 0.30, paint: false }),
-  glow: toon(0xf08670, { emissive: 0xe0644c, emissiveIntensity: 1.0, paint: false }),
+  glow: toon(0xf08a78, { emissive: 0xd85c56, emissiveIntensity: 0.9, paint: false }),
   rockBlue: toon(PAL.rockBlue, { snow: 1, strata: 1, snowTh: 0.83, ramp: RAMP_ROCK, fam: ROCKBLUE }),
   rockRed: toon(PAL.rockRed, { snow: 1, strata: 1, snowTh: 0.83, ramp: RAMP_ROCK, bounce: [0.10, 0.05, 0.05], fam: ROCKRED }),
   // near-LOD rocks carry real snow-cap meshes: no painted snow on top of them (its normal-based contour would show polygon edges)

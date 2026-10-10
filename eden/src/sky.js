@@ -1,26 +1,39 @@
-// Saturated blue sky dome, giant banded gas-giant with atmosphere rim and thin sweeping ring arcs, small moon,
-// and cel-shaded cumulus banks along the horizon (large soft lobes, flat bellies, cool lavender undersides).
+// Painterly anime sky: saturated blue vertical gradient with a soft pale haze horizon and faint high cirrus strokes, a giant pale
+// ringed planet that is mostly sky-coloured (soft swirled bands, bright limb, veiled by the horizon haze), thin tapered orbital
+// arcs, a small moon, and large piled cumulus banks (lobed ellipsoid impostors: bright white tops, pale lavender-blue bellies).
+// Colours below are authored as sRGB hex through THREE.Color (-> linear uniforms); the haze colour at the horizon is the same
+// colour atmosphere.js fades far geometry into, so distant silhouettes dissolve into the sky.
 import * as THREE from 'three';
-import { PAL } from './materials.js';
-import { rng, makeNoise } from './noise.js';
+import { rng } from './noise.js';
+import { HAZE } from './atmosphere.js';
 
-export const SUN_DIR = new THREE.Vector3(-0.78, 0.55, 0.1).normalize();
-export const FOG_COLOR = new THREE.Color(0xb3c7f4);
+export const SUN_DIR = HAZE.sun.clone();
+export const FOG_COLOR = new THREE.Color(0xbbd0f8);
 
 const GLSL_NOISE = /* glsl */ `
 float sh31(vec3 p){ return fract(sin(dot(p, vec3(127.1, 311.7, 74.7))) * 43758.5453); }
 float svn(vec3 p){ vec3 i = floor(p), f = fract(p); f = f*f*(3.0-2.0*f);
   return mix(mix(mix(sh31(i), sh31(i+vec3(1,0,0)), f.x), mix(sh31(i+vec3(0,1,0)), sh31(i+vec3(1,1,0)), f.x), f.y),
              mix(mix(sh31(i+vec3(0,0,1)), sh31(i+vec3(1,0,1)), f.x), mix(sh31(i+vec3(0,1,1)), sh31(i+vec3(1,1,1)), f.x), f.y), f.z); }
-float sh11(float n){ return fract(sin(n * 12.9898 + 4.1) * 43758.5453); }
 float sfbm(vec3 p){ return svn(p)*0.55 + svn(p*2.03+7.1)*0.3 + svn(p*4.1+3.3)*0.15; }
 `;
+
+// the dome shares the haze model: the same sun glow / elevation tint as the fog chunk, so far silhouettes meet the sky seamlessly
+const HAZE_GLSL = /* glsl */ `
+vec3 hazeAt(vec3 d, vec3 hor){
+  float up = smoothstep(0.0, 0.5, d.y);
+  vec3 c = mix(hor, vec3(${HAZE.zenithBlue.map((v) => v.toFixed(4)).join(', ')}), up * 0.55);
+  float s = pow(max(dot(d, vec3(${HAZE.sun.x.toFixed(4)}, ${HAZE.sun.y.toFixed(4)}, ${HAZE.sun.z.toFixed(4)})), 0.0), 5.0);
+  return c + vec3(0.060, 0.052, 0.022) * s * (1.0 - up * 0.6);
+}
+`;
+
+const col = (hex) => new THREE.Color(hex);
 
 export function createSky(scene) {
   const g = new THREE.Group();
   g.name = 'sky';
   scene.add(g);
-  const N3 = makeNoise(9);
 
   // ── dome ────────────────────────────────────────────────────────────────────────────────────
   const dome = new THREE.Mesh(
@@ -28,26 +41,34 @@ export function createSky(scene) {
     new THREE.ShaderMaterial({
       side: THREE.BackSide, depthWrite: false, fog: false,
       uniforms: {
-        top: { value: new THREE.Color(PAL.skyTop) },
-        mid: { value: new THREE.Color(PAL.skyMid) },
+        cTop: { value: col(0x2f66dc) },
+        cMid: { value: col(0x4c88ec) },
+        cLow: { value: col(0x7fb0f6) },
         hor: { value: FOG_COLOR },
         sun: { value: SUN_DIR.clone() },
       },
       vertexShader: 'varying vec3 vP; void main(){ vP=position; gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.0); }',
-      fragmentShader: `varying vec3 vP; uniform vec3 top; uniform vec3 mid; uniform vec3 hor; uniform vec3 sun;
+      fragmentShader: `varying vec3 vP; uniform vec3 cTop; uniform vec3 cMid; uniform vec3 cLow; uniform vec3 hor; uniform vec3 sun;
         ${GLSL_NOISE}
+        ${HAZE_GLSL}
         void main(){
           vec3 d = normalize(vP);
           float h = d.y;
-          vec3 c = mix(hor, mid, smoothstep(0.0, 0.30, h));
-          c = mix(c, top, smoothstep(0.20, 0.80, h));
-          c = mix(hor, c, smoothstep(-0.12, 0.02, h));
-          // faint paint-stroke drift in the blue so the dome never reads as a flat gradient
-          float st = sfbm(vec3(d.x * 5.0, d.y * 14.0, d.z * 5.0)) - 0.5;
-          c += vec3(-0.012, 0.0, 0.02) * st * smoothstep(0.05, 0.4, h);
-          // soft sun-side lift
-          float sd = max(dot(d, normalize(sun)), 0.0);
-          c += vec3(0.05, 0.06, 0.04) * pow(sd, 6.0) * (1.0 - smoothstep(0.0, 0.6, h) * 0.4);
+          // deep zenith -> rich mid blue -> bright low blue -> pale hazy horizon
+          vec3 c = mix(hazeAt(d, hor), cLow, smoothstep(0.0, 0.11, h));
+          c = mix(c, cMid, smoothstep(0.07, 0.36, h));
+          c = mix(c, cTop, smoothstep(0.30, 0.95, h));
+          c = mix(hazeAt(d, hor), c, smoothstep(-0.05, 0.0, h));
+          // high, thin painted cirrus: long horizontal soft wisps, only mid-sky, only barely lighter than the blue
+          float az = atan(d.x, -d.z);
+          vec2 q = vec2(az * 2.0, h * 10.0);
+          float w1 = sfbm(vec3(q * 0.8, 1.7)) - 0.5;
+          float st = svn(vec3(q.x + w1 * 3.0, q.y * 2.6 + w1 * 2.0, 5.0));
+          float wisp = smoothstep(0.58, 0.82, st) * smoothstep(0.06, 0.22, h) * (1.0 - smoothstep(0.36, 0.70, h));
+          c = mix(c, vec3(0.42, 0.62, 0.97), wisp * 0.20);
+          // very faint large-scale tonal drift so the blue is never a pure gradient
+          float dr = sfbm(vec3(az * 1.3, h * 3.0, 9.0)) - 0.5;
+          c += vec3(-0.004, 0.0, 0.010) * dr * smoothstep(0.05, 0.4, h);
           gl_FragColor = vec4(c, 1.0);
           #include <colorspace_fragment>
         }`,
@@ -56,35 +77,52 @@ export function createSky(scene) {
   g.add(dome);
 
   // ── ringed planet (upper right, as in the concept) ───────────────────────────────────────────
-  const planetDir = new THREE.Vector3(0.62, 0.42, -0.66).normalize();
+  const planetDir = new THREE.Vector3(0.62, 0.50, -0.60).normalize();
+  const PLANET_ANG = Math.asin(2000 / 4200);
   const planet = new THREE.Group();
   planet.position.copy(planetDir).multiplyScalar(4200);
   planet.lookAt(0, 0, 0);
   g.add(planet);
-  const R = 1250;
+  const R = 2000;
   const pMat = new THREE.ShaderMaterial({
     fog: false, depthWrite: true,
-    vertexShader: 'varying vec3 vN; varying vec3 vO; varying vec3 vV; void main(){ vO=position; vN=normalize(mat3(modelMatrix)*normal); vec4 wp = modelMatrix*vec4(position,1.0); vV = normalize(cameraPosition - wp.xyz); gl_Position=projectionMatrix*viewMatrix*wp;}',
-    fragmentShader: `varying vec3 vN; varying vec3 vO; varying vec3 vV;
+    uniforms: {
+      sun: { value: SUN_DIR.clone() }, hor: { value: FOG_COLOR },
+      cNight: { value: col(0x6a9aea) }, cDay: { value: col(0xa6c1f8) }, cDeep: { value: col(0x8199dc) },
+      cStreak: { value: col(0xdbe6fb) }, cLimb: { value: col(0xe9f0fd) },
+    },
+    vertexShader: 'varying vec3 vN; varying vec3 vO; varying vec3 vV; varying vec3 vW; void main(){ vO=position; vN=normalize(mat3(modelMatrix)*normal); vec4 wp = modelMatrix*vec4(position,1.0); vV = normalize(cameraPosition - wp.xyz); vW = wp.xyz - cameraPosition; gl_Position=projectionMatrix*viewMatrix*wp;}',
+    fragmentShader: `varying vec3 vN; varying vec3 vO; varying vec3 vV; varying vec3 vW;
+      uniform vec3 sun; uniform vec3 hor; uniform vec3 cNight; uniform vec3 cDay; uniform vec3 cDeep; uniform vec3 cStreak; uniform vec3 cLimb;
       ${GLSL_NOISE}
       void main(){
         vec3 n = normalize(vN);
-        float l = dot(n, normalize(vec3(-0.75, 0.5, -0.25)));
-        float lat = vO.y / ${R.toFixed(1)};
-        // crisp cel bands of varying width + tone; the boundaries only drift very slowly (no wavy stripes)
-        float warp = (sfbm(vec3(vO.x * 0.0012, vO.y * 0.0007, vO.z * 0.0012)) - 0.5) * 0.30;
-        float bl = (lat + warp) * 7.0;
-        float bi = floor(bl), bf = fract(bl);
-        float tone = sh11(bi * 1.7 + 3.0);
-        vec3 lit = tone < 0.30 ? vec3(0.47, 0.64, 0.97) : (tone < 0.64 ? vec3(0.66, 0.80, 1.0) : vec3(0.86, 0.93, 1.0));
-        lit = mix(lit, vec3(0.95, 0.975, 1.0), (1.0 - smoothstep(0.0, 0.06, bf)) * 0.75 * step(0.45, sh11(bi * 4.3)));   // thin pale streak at some band edges
-        vec3 sh = tone < 0.30 ? vec3(0.17, 0.27, 0.66) : (tone < 0.64 ? vec3(0.24, 0.37, 0.76) : vec3(0.31, 0.45, 0.85));
-        float cel = smoothstep(-0.10, 0.06, l) * 0.55 + smoothstep(0.16, 0.30, l) * 0.45;
-        vec3 c = mix(sh, lit, cel);
-        // limb darkening toward saturated blue, with a thin bright atmosphere line on the lit edge
-        float rim = pow(1.0 - abs(dot(n, normalize(vV))), 2.6);
-        c = mix(c, vec3(0.34, 0.52, 0.94), smoothstep(0.30, 0.95, rim) * 0.55 * (1.0 - cel * 0.4));
-        c += vec3(0.16, 0.18, 0.16) * smoothstep(0.82, 1.0, rim) * smoothstep(-0.1, 0.5, l);
+        vec3 v = normalize(vV);
+        float ndv = clamp(dot(n, v), 0.0, 1.0);
+        float l = dot(n, normalize(sun));
+        // soft banded swirls following the globe: a tilted pole gives curved latitude arcs that sweep like the concept
+        vec3 u = normalize(vO);
+        vec3 ax = normalize(vec3(0.58, 0.80, 0.30));
+        vec3 e1 = normalize(vec3(0.0, 0.0, 1.0) - ax * ax.z);
+        vec3 e2 = cross(ax, e1);
+        float lat = dot(u, ax);
+        float lon = atan(dot(u, e2), dot(u, e1));
+        float w1 = sfbm(vec3(u * 2.2 + 1.3)) - 0.5;
+        float w2 = sfbm(vec3(u * 5.0 + 9.1)) - 0.5;
+        float s1 = svn(vec3(lon * 1.7 + w1 * 2.4, lat * 13.0 + w1 * 4.5, 2.0));
+        float s2 = svn(vec3(lon * 3.0 + w2 * 2.8, lat * 29.0 + w2 * 5.0, 6.0));
+        float streak = smoothstep(0.50, 0.72, s1) * 0.85 + smoothstep(0.58, 0.80, s2) * 0.45;
+        float deep = smoothstep(0.52, 0.78, sfbm(vec3(u * 3.4 + vec3(0.0, lat * 2.0, 4.0))));
+        float day = smoothstep(-0.30, 0.55, l);
+        vec3 c = mix(cNight, cDay, day);
+        c = mix(c, cDeep, deep * (0.25 + 0.35 * day));
+        c = mix(c, cStreak, clamp(streak, 0.0, 1.0) * (0.10 + 0.62 * day));
+        // atmosphere rim: crisp pale line on the lit limb, only a hint of it on the shadow side
+        float rim = pow(1.0 - ndv, 3.0);
+        c = mix(c, cLimb, smoothstep(0.55, 0.98, rim) * (0.25 + 0.75 * smoothstep(-0.25, 0.45, l)));
+        // the horizon haze (and cloud banks) veil the lower part of the disc
+        float el = normalize(vW).y;
+        c = mix(c, hor, smoothstep(0.22, 0.02, el) * 0.75);
         gl_FragColor = vec4(c, 1.0);
         #include <colorspace_fragment>
       }`,
@@ -92,48 +130,74 @@ export function createSky(scene) {
   const body = new THREE.Mesh(new THREE.SphereGeometry(R, 96, 64), pMat);
   body.renderOrder = -9;
   planet.add(body);
+  // sky layers that must blend are drawn in the OPAQUE pass (custom blending, not `transparent`) so the cloud banks, which are
+  // opaque-pass geometry, always cover them: rings and glow sit behind the clouds as they should
+  const skyBlend = { transparent: false, blending: THREE.CustomBlending, blendSrc: THREE.SrcAlphaFactor, blendDst: THREE.OneMinusSrcAlphaFactor, blendEquation: THREE.AddEquation };
   // outer atmosphere glow: camera-facing billboard (the planet group looks at the origin) with a soft falloff just outside the limb
-  const halo = new THREE.Mesh(new THREE.PlaneGeometry(R * 2 * 1.5, R * 2 * 1.5), new THREE.ShaderMaterial({
-    fog: false, transparent: true, depthWrite: false,
+  const RS = R / Math.cos(PLANET_ANG);                     // silhouette radius of the sphere in the plane through its centre
+  const halo = new THREE.Mesh(new THREE.PlaneGeometry(RS * 2 * 1.5, RS * 2 * 1.5), new THREE.ShaderMaterial({
+    fog: false, depthWrite: false, depthTest: false, ...skyBlend,
     vertexShader: 'varying vec2 vU; void main(){ vU = uv - 0.5; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }',
     fragmentShader: `varying vec2 vU;
       void main(){
         float rr = length(vU) * 2.0 * 1.5;               // 1.0 at the planet limb
-        float a = exp(-(rr - 1.0) * 6.0) * smoothstep(0.995, 1.03, rr);
-        a *= 0.50 * (1.0 - smoothstep(1.2, 1.5, rr));
+        float a = exp(-(rr - 1.0) * 7.0) * smoothstep(0.995, 1.025, rr);
+        a *= 0.42 * (1.0 - smoothstep(1.15, 1.5, rr));
         gl_FragColor = vec4(vec3(0.72, 0.84, 1.0), a);
         #include <colorspace_fragment>
       }`,
   }));
   halo.renderOrder = -8;
   planet.add(halo);
-  // rings: a broad faint veil + two thin crisp lines, tilted so they sweep across the sky as long arcs
+  // rings: slender tapered arcs. The ring is a flat ELLIPSE painted on the planet's screen-facing plane (squashed and rolled), not a
+  // real tilted disc: all of it stays at the planet's depth, so no part swings toward the camera. The lower half passes in front of
+  // the planet, the upper half behind it (discarded inside the disc). Each streak has its own radius, width and angular window;
+  // width and opacity taper to a point at both ends, so they read as long sweeping brush strokes rather than uniform stripes.
   const ringMat = new THREE.ShaderMaterial({
-    fog: false, transparent: true, depthWrite: false, depthTest: true, side: THREE.DoubleSide,
-    vertexShader: 'varying vec3 vP; void main(){ vP=position; gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.0);}',
-    fragmentShader: `varying vec3 vP;
+    fog: false, depthWrite: false, depthTest: false, side: THREE.DoubleSide, ...skyBlend,
+    uniforms: { uPsi: { value: 0.34 }, uSquash: { value: 0.30 } },
+    vertexShader: 'varying vec2 vP; void main(){ vP=position.xy / ' + R.toFixed(1) + '; gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.0);}',
+    fragmentShader: `varying vec2 vP; uniform float uPsi; uniform float uSquash;
       ${GLSL_NOISE}
-      float line(float t, float c, float w, float soft){ return 1.0 - smoothstep(w, w + soft, abs(t - c)); }
+      const float PI = 3.14159265;
+      // c: ellipse semi-major (in planet radii), w: half width (planet radii, measured across the stroke), a0..a1: angular window
+      // (radians along the ellipse), s: edge softness (fraction of w)
+      float streak(float er, float g, float ang, float c, float w, float a0, float a1, float s){
+        float u = (ang - a0) / (a1 - a0);
+        if (u <= 0.0 || u >= 1.0) return 0.0;
+        float env = pow(sin(PI * u), 0.65);                 // 0 at both tips, ~1 across the middle
+        float ww = w * (0.16 + 0.84 * env);
+        float d = abs(er - c) / g;
+        return (1.0 - smoothstep(ww * (1.0 - s), ww, d)) * env;
+      }
       void main(){
-        float r = length(vP.xy);
-        float t = (r - ${(R * 1.45).toFixed(1)}) / ${(R * 1.35).toFixed(1)};
-        float ang = atan(vP.y, vP.x);
-        float a = line(t, 0.14, 0.04, 0.07) * 0.07 + line(t, 0.50, 0.008, 0.008) * 0.95 + line(t, 0.555, 0.016, 0.014) * 0.5 + line(t, 0.84, 0.006, 0.007) * 0.7;
-        a *= smoothstep(0.0, 0.04, t) * (1.0 - smoothstep(0.92, 1.0, t));
-        // long tapered arcs: brightness waxes and wanes around the ring
-        a *= 0.30 + 0.70 * smoothstep(0.25, 0.75, sfbm(vec3(cos(ang) * 1.6 + 3.0, sin(ang) * 1.6, t * 2.0)));
-        gl_FragColor = vec4(vec3(0.97, 0.98, 1.0), a);
+        vec2 p = vP;
+        float cs = cos(uPsi), sn = sin(uPsi);
+        vec2 u = vec2(cs * p.x + sn * p.y, -sn * p.x + cs * p.y);
+        vec2 ue = vec2(u.x, u.y / uSquash);
+        float er = length(ue);
+        float g = length(vec2(u.x, u.y / (uSquash * uSquash))) / max(er, 1e-4);     // |grad er|: converts er offsets to perpendicular distance
+        float ang = atan(ue.y, ue.x);
+        if (u.y > 0.0 && length(p) < 1.14) discard;           // the far half of the ring is hidden behind the planet
+        float a = 0.0;
+        a = max(a, streak(er, g, ang, 2.20, 0.085, 1.75, 3.00, 0.95) * 0.24);    // broad pale veil
+        a = max(a, streak(er, g, ang, 2.02, 0.013, 1.95, 3.05, 0.65) * 0.95);   // bright thin line (inner)
+        a = max(a, streak(er, g, ang, 2.13, 0.022, 1.80, 3.08, 0.85) * 0.80);    // soft thicker line
+        a = max(a, streak(er, g, ang, 2.34, 0.011, 2.05, 3.02, 0.60) * 0.80);   // outer thin line
+        a = max(a, streak(er, g, ang, 2.50, 0.007, 2.20, 2.94, 0.55) * 0.55);   // faint far line
+        a *= 0.72 + 0.28 * smoothstep(0.25, 0.75, sfbm(vec3(cos(ang) * 2.0 + 3.0, sin(ang) * 2.0, er * 3.0)));
+        if (a <= 0.002) discard;
+        gl_FragColor = vec4(vec3(0.95, 0.97, 1.0), a);
         #include <colorspace_fragment>
       }`,
   });
-  const ring = new THREE.Mesh(new THREE.RingGeometry(R * 1.45, R * 2.8, 256, 1), ringMat);
-  ring.rotation.set(1.30, 0.16, 0.62);
+  const ring = new THREE.Mesh(new THREE.PlaneGeometry(R * 5.4, R * 5.4), ringMat);
   ring.renderOrder = -7;
   planet.add(ring);
 
   // ── small moon ───────────────────────────────────────────────────────────────────────────────
   const moon = new THREE.Mesh(
-    new THREE.SphereGeometry(110, 48, 32),
+    new THREE.SphereGeometry(190, 48, 32),
     new THREE.ShaderMaterial({
       fog: false,
       vertexShader: 'varying vec3 vN; varying vec3 vO; void main(){ vO=position; vN=normalize(mat3(modelMatrix)*normal); gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.0);}',
@@ -144,7 +208,7 @@ export function createSky(scene) {
           vec3 u = normalize(vO);
           // light from the upper left, nearly side-on to the viewer: a gibbous disc with a crisp curved terminator
           float l = dot(n, normalize(vec3(-0.85, 0.40, 0.30)));
-          // a handful of big round craters (dark floor, bright lit rim), cel-flat
+          // a handful of big round craters (soft lavender floor, bright lit rim), cel-flat
           float cr = 0.0, rimK = 0.0;
           vec3 cc[6]; float cs[6];
           cc[0] = vec3(0.30, 0.52, 0.80); cs[0] = 0.30;
@@ -155,13 +219,13 @@ export function createSky(scene) {
           cc[5] = vec3(-0.62, -0.30, 0.72); cs[5] = 0.14;
           for (int i = 0; i < 6; i++) {
             float q = crater(u, cc[i], cs[i]);
-            cr = max(cr, 1.0 - smoothstep(0.88, 0.94, q));
+            cr = max(cr, 1.0 - smoothstep(0.70, 0.98, q));
             rimK = max(rimK, smoothstep(0.84, 0.90, q) * (1.0 - smoothstep(0.96, 1.04, q)));
           }
-          vec3 lit = mix(vec3(0.97, 0.98, 1.0), vec3(0.72, 0.78, 0.95), cr * 0.9);
-          lit = mix(lit, vec3(1.0), rimK * 0.5);
-          vec3 sh = mix(vec3(0.52, 0.62, 0.91), vec3(0.38, 0.47, 0.80), cr * 0.9);
-          float cel = smoothstep(0.0, 0.035, l) * 0.62 + smoothstep(0.30, 0.38, l) * 0.38;
+          vec3 lit = mix(vec3(0.95, 0.97, 1.0), vec3(0.78, 0.84, 0.98), cr * 0.55);
+          lit = mix(lit, vec3(1.0), rimK * 0.20);
+          vec3 sh = mix(vec3(0.48, 0.60, 0.92), vec3(0.40, 0.50, 0.85), cr * 0.55);
+          float cel = smoothstep(0.0, 0.05, l) * 0.62 + smoothstep(0.30, 0.40, l) * 0.38;
           vec3 c = mix(sh, lit, cel);
           gl_FragColor = vec4(c, 1.0);
           #include <colorspace_fragment>
@@ -171,59 +235,78 @@ export function createSky(scene) {
   moon.renderOrder = -6;
   g.add(moon);
 
-  // ── cumulus banks ───────────────────────────────────────────────────────────────────────────
-  // Every lobe is an analytic ellipsoid IMPOSTOR (camera-facing quad, ray-ellipsoid solve in the fragment shader, real depth):
-  // perfectly round, anti-aliased silhouettes at any size and only 2 triangles per lobe, so the clouds are never polygonal.
+  // ── cumulus piles ───────────────────────────────────────────────────────────────────────────
+  // Each pile is ONE card (a world-space quad on the tangent plane of the sky sphere, facing the viewer). Its body is a cluster of
+  // 35-60 spheres kept in a data texture; the fragment shader ray-resolves the cluster as a union (the scalloped, cauliflower
+  // outline), blends the sphere normals with a soft maximum (so the shading reads as one billowing mass instead of separate balls),
+  // and paints it with a soft 3-tone cel: bright white tops, pale lavender half-shade, blue-lavender belly, soft lavender creases.
   const cloudMat = new THREE.ShaderMaterial({
     fog: false, alphaToCoverage: true, depthTest: false, depthWrite: false,
-    uniforms: { sun: { value: SUN_DIR.clone() }, hor: { value: FOG_COLOR } },
-    vertexShader: `attribute vec3 aC; attribute vec3 aS; attribute float aR; attribute vec2 aB;
-      varying vec3 vPv; varying vec3 vC; varying vec3 vS; varying float vR; varying vec2 vB;
+    uniforms: { sun: { value: SUN_DIR.clone() }, hor: { value: FOG_COLOR }, tLobes: { value: null } },
+    vertexShader: `attribute vec3 aC; attribute vec3 aX; attribute vec3 aY; attribute vec2 aHalf; attribute vec2 aLobe; attribute vec2 aMeta;
+      varying vec2 vP; varying vec3 vD; varying vec3 vAx; varying vec3 vAy; varying vec2 vLobe; varying vec2 vMeta;
       void main(){
-        vec4 cv = viewMatrix * modelMatrix * vec4(aC, 1.0);
-        // tight screen-space bounding box of the projected ellipsoid (support function of the view-space covariance): little overdraw
-        float cy = cos(aR), sy = sin(aR);
-        mat3 A = mat3(viewMatrix) * transpose(mat3(cy, 0.0, sy, 0.0, 1.0, 0.0, -sy, 0.0, cy));
-        vec3 s2 = aS * aS;
-        float ex = sqrt(A[0].x * A[0].x * s2.x + A[1].x * A[1].x * s2.y + A[2].x * A[2].x * s2.z);
-        float ey = sqrt(A[0].y * A[0].y * s2.x + A[1].y * A[1].y * s2.y + A[2].y * A[2].y * s2.z);
-        vec4 pv = cv + vec4(position.x * ex * 1.12, position.y * ey * 1.12, 0.0, 0.0);
-        vPv = pv.xyz; vC = aC; vS = aS; vR = aR; vB = aB;
-        gl_Position = projectionMatrix * pv;
+        vec2 pl = position.xy * aHalf;
+        vec3 w = aC + aX * pl.x + aY * pl.y;
+        vP = pl; vD = w; vAx = aX; vAy = aY; vLobe = aLobe; vMeta = aMeta;
+        gl_Position = projectionMatrix * viewMatrix * modelMatrix * vec4(w, 1.0);
       }`,
-    fragmentShader: `varying vec3 vPv; varying vec3 vC; varying vec3 vS; varying float vR; varying vec2 vB; uniform vec3 sun; uniform vec3 hor;
+    fragmentShader: `precision highp sampler2D;
+      varying vec2 vP; varying vec3 vD; varying vec3 vAx; varying vec3 vAy; varying vec2 vLobe; varying vec2 vMeta;
+      uniform vec3 sun; uniform vec3 hor; uniform sampler2D tLobes;
+      ${GLSL_NOISE}
       void main(){
-        // world-aligned ray (the sky group sits at the camera, so its local origin is the eye)
-        vec3 D = normalize(transpose(mat3(viewMatrix)) * normalize(vPv));
-        float cy = cos(vR), sy = sin(vR);
-        vec3 rel = -vC;                                       // eye relative to the lobe centre
-        vec3 o = vec3(cy * rel.x - sy * rel.z, rel.y, sy * rel.x + cy * rel.z) / vS;
-        vec3 d = vec3(cy * D.x - sy * D.z, D.y, sy * D.x + cy * D.z) / vS;
-        float a = dot(d, d), b = dot(o, d), c = dot(o, o) - 1.0;
-        float r2 = dot(o, o) - b * b / a;                      // squared closest approach (unit-sphere space)
-        float w = fwidth(r2) * 0.9 + 1e-4;
-        float cov = 1.0 - smoothstep(1.0 - w, 1.0 + w, r2);
+        float H = vMeta.y;
+        float aa = max(length(fwidth(vP)), 1e-3);
+        int start = int(vLobe.x + 0.5), count = int(vLobe.y + 0.5);
+        float beta = 1.0 / (0.16 * H);                          // softness of the normal blend between neighbouring lobes
+        float cov = 0.0, m = -1e9, wsum = 0.0, z1 = -1e9, z2 = -1e9;
+        vec3 nsum = vec3(0.0);
+        for (int j = 0; j < 128; j++) {
+          if (j >= count) break;
+          int idx = start + j;
+          vec4 Lb = texelFetch(tLobes, ivec2(idx & 255, idx >> 8), 0);
+          vec2 dv = vP - Lb.xy;
+          float d2 = dot(dv, dv);
+          float r = Lb.w;
+          float edge = r - sqrt(d2);
+          cov = max(cov, clamp(edge / aa + 0.5, 0.0, 1.0));
+          if (edge > -aa) {
+            float hz = sqrt(max(r * r - d2, 0.0));
+            float z = Lb.z + hz;
+            vec3 nr = vec3(dv, hz) / r;
+            float w;
+            if (z > m) { float s = exp(beta * (m - z)); wsum *= s; nsum *= s; m = z; w = 1.0; }
+            else w = exp(beta * (z - m));
+            wsum += w; nsum += w * nr;
+            if (z > z1) { z2 = z1; z1 = z; } else if (z > z2) { z2 = z; }
+          }
+        }
         if (cov <= 0.0) discard;
-        float disc = max(b * b - a * c, 0.0);
-        float t = (-b - sqrt(disc)) / a;
-        vec3 pl = o + t * d;                                   // unit-sphere hit point
-        vec3 nl = pl / vS;
-        vec3 n = normalize(vec3(cy * nl.x + sy * nl.z, nl.y, -sy * nl.x + cy * nl.z));
-        vec3 P = t * D;
-        float vH = clamp((P.y - vB.x) / vB.y, 0.0, 1.0);
-        float l = dot(n, normalize(sun));
-        // 3-tone cel: clean white lit tops, pale blue half-shadow, periwinkle core shadow
-        float cel = smoothstep(-0.12, 0.02, l) * 0.5 + smoothstep(0.30, 0.46, l) * 0.5;
-        vec3 shade = vec3(0.60, 0.69, 0.93);
-        vec3 mid = vec3(0.82, 0.88, 1.0);
-        vec3 lit = vec3(1.0);
+        vec3 nrm = normalize(nsum / max(wsum, 1e-4));
+        // card frame: x right, y up (tilted by elevation), z toward the viewer. Light: the sun, wrapped so that every pile is
+        // front-lit from the upper left whatever its azimuth (back-lit piles would otherwise turn grey)
+        vec3 az = cross(vAx, vAy);
+        vec3 sc = vec3(dot(sun, vAx), dot(sun, vAy), dot(sun, az));
+        vec3 Lc = normalize(vec3(sc.x * 0.8, 0.70 + 0.30 * sc.y, 0.40 + 0.3 * sc.z));
+        vec3 pw = vec3(vP, 0.0) * (6.0 / H);
+        nrm = normalize(nrm + 0.30 * (vec3(svn(pw), svn(pw + 11.3), svn(pw + 23.7)) - 0.5));
+        float l = dot(nrm, Lc);
+        float cel = smoothstep(-0.18, 0.06, l) * 0.5 + smoothstep(0.24, 0.52, l) * 0.5;
+        vec3 shade = vec3(0.58, 0.69, 0.96);
+        vec3 mid = vec3(0.84, 0.90, 1.0);
+        vec3 lit = vec3(1.0, 0.995, 0.985);
         vec3 col = cel < 0.5 ? mix(shade, mid, cel * 2.0) : mix(mid, lit, (cel - 0.5) * 2.0);
-        // flat cool belly, brighter crowns
-        col = mix(col, col * vec3(0.84, 0.88, 1.0), smoothstep(0.35, 0.0, vH) * 0.55);
-        col = mix(col, vec3(1.0), smoothstep(0.65, 1.0, vH) * 0.20 * step(0.0, l));
+        // soft lavender creases where two puffs meet
+        float crease = (z2 > -1e8) ? smoothstep(0.16, 0.0, (z1 - z2) / (0.10 * H)) : 0.0;
+        col = mix(col, shade * vec3(0.92, 0.95, 1.0), crease * 0.16 * (1.0 - 0.8 * smoothstep(0.1, 0.5, l)));
+        // belly: the base of the pile turns blue-lavender, crowns stay bright
+        float vH = clamp((vP.y - vMeta.x) / H, 0.0, 1.0);
+        col = mix(col, vec3(0.44, 0.58, 0.93), smoothstep(0.38, 0.0, vH) * 0.55);
+        col = mix(col, vec3(1.0), smoothstep(0.62, 1.0, vH) * 0.22 * smoothstep(0.0, 0.3, l));
         // atmospheric haze toward the horizon
-        float hz = smoothstep(0.16, 0.0, normalize(P).y);
-        col = mix(col, hor, hz * 0.45);
+        float hz = smoothstep(0.20, 0.0, normalize(vD).y);
+        col = mix(col, hor, hz * 0.55);
         gl_FragColor = vec4(col, cov);
         #include <colorspace_fragment>
       }`,
@@ -232,108 +315,119 @@ export function createSky(scene) {
   g.add(cloudGroup);
   const r = rng(77);
   const quad = new THREE.PlaneGeometry(2, 2);
-  const lobes = [];
-  const lobe = (cx, cy, cz, sx, sy, sz, ry, bankBase, bankH) => {
-    // painter's-order key: far lobes first (depth testing at 3-5 km would z-fight at the lobe intersections)
-    lobes.push({ cx, cy, cz, sx, sy, sz, ry, bankBase, bankH, key: Math.hypot(cx, cy, cz) - 0.35 * Math.max(sx, sy, sz) });
-  };
-  function flushBank() {}                      // lobes of every bank are merged and depth-sorted once, in finishClouds()
+  const lobeData = [];                        // x, y, z, r per lobe (card-centred coordinates)
+  const piles = [];
+  // A pile grown like a cauliflower: a few big seed lobes on a flat base, then children are budded off the upper-front
+  // surface of existing lobes (smaller each generation), so the silhouette is a scallop of ever smaller round puffs.
+  function pile(az, elev, dist, W, H, count) {
+    const L = [];
+    // skyline envelope: 2-3 towering heads of different height over a lower shoulder
+    const nPk = 2 + Math.floor(r() * 2);
+    const pk = [];
+    for (let i = 0; i < nPk; i++) pk.push({ u: (r() - 0.5) * 0.8, h: 0.55 + 0.45 * r(), w: 0.10 + 0.12 * r() });
+    pk[0].h = 1.0;
+    const env = (u) => { let e = 0.30; for (const q of pk) e = Math.max(e, q.h * Math.exp(-Math.pow((u - q.u) / q.w, 2))); return e; };
+    // caps: lobes whose tops follow the skyline (the outline), each budding smaller puffs on its upper-front surface
+    const nCap = Math.max(5, Math.round(W / (H * 0.40)));
+    for (let i = 0; i < nCap; i++) {
+      const u = (i + 0.5) / nCap - 0.5 + (r() - 0.5) * 0.4 / nCap;
+      const T = H * env(u);
+      const Rc = Math.min(T * (0.30 + 0.10 * r()), H * 0.36) * (0.85 + 0.3 * r());
+      const c = { x: u * W, y: T - Rc * 0.82, z: (r() - 0.5) * Rc * 0.4, R: Rc };
+      L.push(c);
+      const nb = 1 + (r() < 0.6 ? 1 : 0) + (r() < 0.25 ? 1 : 0);
+      for (let k = 0; k < nb; k++) {
+        const rc = Rc * (0.50 + 0.25 * r());
+        const a = (0.12 + 0.76 * r()) * Math.PI;
+        const reach = Rc * 0.80 + rc * 0.30;
+        L.push({ x: c.x + Math.cos(a) * reach * 1.1, y: Math.min(c.y + Math.sin(a) * reach * 0.9, T - rc * 0.55), z: c.z + rc * (0.2 + 0.4 * r()), R: rc });
+      }
+    }
+    // body: fill the volume under the skyline with big lobes (the mass of the pile), flat-based
+    const nFill = Math.max(4, Math.round(count * 0.35));
+    for (let i = 0; i < nFill; i++) {
+      const u = (r() - 0.5) * 0.92;
+      const T = H * env(u);
+      const Rf = Math.max(H * 0.14, Math.min(T * 0.36, H * 0.34)) * (0.8 + 0.4 * r());
+      const yMax = T - Rf * 1.1;
+      L.push({ x: u * W, y: Math.max(Rf * 0.9, yMax * (0.15 + 0.7 * r())), z: (r() - 0.35) * Rf * 0.5, R: Rf });
+    }
+    // flat base: wide low lobes so the bottom of the pile reads as one flat cloud base
+    const nBase = Math.max(3, Math.round(W / (H * 0.7)));
+    for (let i = 0; i < nBase; i++) {
+      const u = (i + 0.5) / nBase - 0.5;
+      const Rb = H * (0.17 + 0.05 * r()) * Math.min(1, 0.4 + env(u) * 1.2);
+      L.push({ x: u * W * 0.95, y: Rb * 0.9, z: Rb * 0.45 + (r() - 0.5) * Rb * 0.3, R: Rb });
+    }
+    // bbox -> card
+    let x0 = 1e9, x1 = -1e9, y0 = 1e9, y1 = -1e9;
+    for (const c of L) { x0 = Math.min(x0, c.x - c.R); x1 = Math.max(x1, c.x + c.R); y0 = Math.min(y0, c.y - c.R); y1 = Math.max(y1, c.y + c.R); }
+    const pad = H * 0.04;
+    x0 -= pad; x1 += pad; y0 -= pad; y1 += pad;
+    const cx = (x0 + x1) / 2, cy = (y0 + y1) / 2;
+    const dir = new THREE.Vector3(Math.sin(az) * Math.cos(elev), Math.sin(elev), -Math.cos(az) * Math.cos(elev));
+    const zA = dir.clone().negate();
+    const xA = new THREE.Vector3(0, 1, 0).cross(zA).normalize();
+    const yA = zA.clone().cross(xA).normalize();
+    const C = dir.clone().multiplyScalar(dist).addScaledVector(xA, cx).addScaledVector(yA, cy);
+    const start = lobeData.length / 4;
+    for (const c of L) lobeData.push(c.x - cx, c.y - cy, c.z, c.R);
+    piles.push({ C, xA, yA, hw: (x1 - x0) / 2, hh: (y1 - y0) / 2, start, count: L.length, base: 0 - cy, H, key: dist });
+  }
   function finishClouds() {
-    lobes.sort((p, q) => q.key - p.key);
-    const n = lobes.length;
-    const C = new Float32Array(n * 3), S = new Float32Array(n * 3), R = new Float32Array(n), B = new Float32Array(n * 2);
-    lobes.forEach((o, i) => { C.set([o.cx, o.cy, o.cz], i * 3); S.set([o.sx, o.sy, o.sz], i * 3); R[i] = o.ry; B.set([o.bankBase, o.bankH], i * 2); });
+    piles.sort((p, q) => q.key - p.key);                 // far piles first (painter's order, no depth test)
+    const n = piles.length;
+    const C = new Float32Array(n * 3), X = new Float32Array(n * 3), Y = new Float32Array(n * 3);
+    const Hf = new Float32Array(n * 2), Lb = new Float32Array(n * 2), M = new Float32Array(n * 2);
+    piles.forEach((o, i) => {
+      C.set(o.C.toArray(), i * 3); X.set(o.xA.toArray(), i * 3); Y.set(o.yA.toArray(), i * 3);
+      Hf.set([o.hw, o.hh], i * 2); Lb.set([o.start, o.count], i * 2); M.set([o.base, o.H], i * 2);
+    });
+    const nL = lobeData.length / 4, TW = 256, TH = Math.ceil(nL / TW);
+    const tex = new Float32Array(TW * TH * 4);
+    tex.set(lobeData);
+    const lt = new THREE.DataTexture(tex, TW, TH, THREE.RGBAFormat, THREE.FloatType);
+    lt.minFilter = lt.magFilter = THREE.NearestFilter; lt.generateMipmaps = false; lt.needsUpdate = true;
+    cloudMat.uniforms.tLobes.value = lt;
     const geo = new THREE.InstancedBufferGeometry();
     geo.index = quad.index;
     geo.setAttribute('position', quad.getAttribute('position'));
     geo.setAttribute('aC', new THREE.InstancedBufferAttribute(C, 3));
-    geo.setAttribute('aS', new THREE.InstancedBufferAttribute(S, 3));
-    geo.setAttribute('aR', new THREE.InstancedBufferAttribute(R, 1));
-    geo.setAttribute('aB', new THREE.InstancedBufferAttribute(B, 2));
+    geo.setAttribute('aX', new THREE.InstancedBufferAttribute(X, 3));
+    geo.setAttribute('aY', new THREE.InstancedBufferAttribute(Y, 3));
+    geo.setAttribute('aHalf', new THREE.InstancedBufferAttribute(Hf, 2));
+    geo.setAttribute('aLobe', new THREE.InstancedBufferAttribute(Lb, 2));
+    geo.setAttribute('aMeta', new THREE.InstancedBufferAttribute(M, 2));
     geo.instanceCount = n;
     const mesh = new THREE.Mesh(geo, cloudMat);
     mesh.frustumCulled = false;
     mesh.renderOrder = -5;
     cloudGroup.add(mesh);
+    console.info('sky: ' + n + ' cloud piles, ' + nL + ' lobes');
   }
-  // a bank frame: lobes are placed in bank-local (lx along the bank, lz toward the origin) coordinates
-  function frame(az, elev, dist, bankBaseOff, Hgt) {
-    const dir = new THREE.Vector3(Math.sin(az) * Math.cos(elev), Math.sin(elev), -Math.cos(az) * Math.cos(elev));
-    const centre = dir.clone().multiplyScalar(dist);
-    const ry = -az, cs = Math.cos(ry), sn = Math.sin(ry);
-    const base = centre.y + bankBaseOff;
-    return (lx, ly, lz, sx, sy, sz) => lobe(centre.x + lx * cs + lz * sn, centre.y + ly, centre.z - lx * sn + lz * cs, sx, sy, sz, ry, base, Hgt);
-  }
-  // little puffs sitting on the surface of a big lobe (scalloped outline: the cartoon-cumulus look)
-  function puffs(place, lx, ly, lz, Rk, count, upBias) {
-    for (let i = 0; i < count; i++) {
-      const a = r() * Math.PI * 2, e = (r() * 0.9 - 0.15 + upBias) * 1.2;
-      const px = Math.cos(a) * Math.cos(e), py = Math.sin(e), pz = Math.sin(a) * Math.cos(e) * 0.8;
-      const rr = Rk * (0.30 + 0.28 * r());
-      place(lx + px * Rk * 0.9, ly + py * Rk * 0.8, lz + pz * Rk * 0.9, rr * 1.15, rr * 0.9, rr);
-    }
-  }
-  function bank(az, elev, dist, W, Hgt) {
-    const place = frame(az, elev, dist, 0, Hgt);
-    const nl = 9 + Math.floor(r() * 7);
-    for (let k = 0; k < nl; k++) {
-      const u = (k + 0.5) / nl - 0.5;
-      const env = Math.max(0.15, 1 - Math.abs(u) * 1.7);
-      const Rk = Hgt * (0.30 + 0.38 * r()) * (0.55 + 0.75 * env);
-      const lx = u * W * 1.5 + (r() - 0.5) * W * 0.05, ly = Rk * (0.42 + 0.35 * env * r()), lz = (r() - 0.5) * W * 0.18;
-      place(lx, ly, lz, Rk * 1.35, Rk * 0.92, Rk * 1.05);
-      if (r() < 0.75) place(lx + (r() - 0.5) * Rk * 0.4, Rk * (0.9 + 0.5 * env * r()), (r() - 0.5) * W * 0.1, Rk * 0.7, Rk * 0.62, Rk * 0.7);
-      if (r() < 0.8) puffs(place, lx, ly, lz, Rk, 2, 0.2);
-    }
-    place(0, Hgt * 0.04, 0, W * 0.92, Hgt * 0.12, W * 0.19);       // flat belly
-    flushBank();
-  }
-  // puffy cumulus: dome-shaped mounds of big overlapping lobes with a shallow flat belly (round and fluffy, not ribbons)
-  function cumulus(az, elev, dist, W, Hh) {
-    const place = frame(az, elev, dist, -Hh * 0.05, Hh * 1.25);
-    const nl = 6 + Math.floor(r() * 4);
-    for (let k = 0; k < nl; k++) {
-      const u = (k + 0.5) / nl - 0.5;
-      const env = Math.max(0.18, 1 - 4 * u * u);
-      const Rk = Hh * (0.30 + 0.30 * env) * (0.85 + 0.3 * r());
-      const lx = u * W * 1.05 + (r() - 0.5) * Rk * 0.4;
-      const ly = Rk * 0.55 + env * Hh * 0.30 * r();
-      place(lx, ly, (r() - 0.5) * W * 0.10, Rk * 1.18, Rk * 0.95, Rk * 1.0);
-      if (env > 0.5 && r() < 0.85) place(lx * 0.75 + (r() - 0.5) * Rk * 0.4, ly + Rk * (0.62 + 0.25 * r()), (r() - 0.5) * W * 0.06, Rk * 0.72, Rk * 0.66, Rk * 0.72);
-      puffs(place, lx, ly, 0, Rk, 3, 0.25);
-    }
-    place(0, Hh * 0.05, 0, W * 0.58, Hh * 0.17, W * 0.17);
-    flushBank();
-  }
-  // keep clouds off the big planet's disc (angular radius ~17 deg): re-roll candidates that would hide it
+  // keep clouds off the big planet's disc: re-roll candidates that would hide it
   const planetAz = Math.atan2(planetDir.x, -planetDir.z);
   const offPlanet = (az, el, margin) => {
     const d = new THREE.Vector3(Math.sin(az) * Math.cos(el), Math.sin(el), -Math.cos(az) * Math.cos(el));
     return d.angleTo(planetDir) > margin;
   };
   const roll = (fn, margin) => { for (let t = 0; t < 12; t++) { const [az, el] = fn(); if (offPlanet(az, el, margin)) return [az, el]; } return null; };
-  // low horizon banks all round, brighter and bigger toward the planet / spawn view
-  const banksN = 30;
-  for (let i = 0; i < banksN; i++) {
-    const az = (i / banksN) * Math.PI * 2 + (r() - 0.5) * 0.18;
-    const dist = 3000 + r() * 1700;
-    const elev = THREE.MathUtils.degToRad(0.5 + r() * 7.5);
-    const W = 520 + r() * 900;
-    bank(az, elev, dist, W, 190 + r() * 380);
+  const rad = THREE.MathUtils.degToRad;
+  // great horizon piles all round (the canyon rim hides the lowest few degrees, so they stand tall)
+  const nBig = 20;
+  for (let i = 0; i < nBig; i++) {
+    const pick = roll(() => [(i / nBig) * Math.PI * 2 + (r() - 0.5) * 0.22, rad(2.5 + r() * 5)], PLANET_ANG + 0.10);
+    if (pick) pile(pick[0], pick[1], 3200 + r() * 1200, 1500 + r() * 1500, 700 + r() * 700, 30 + Math.floor(r() * 14));
   }
-  // a ring of tall cumulus at 9-22 degrees so cloud always shows above the canyon rims at eye level, plus higher puffs
-  for (let i = 0; i < 14; i++) {
-    const pick = roll(() => [(i / 14) * Math.PI * 2 + (r() - 0.5) * 0.3, THREE.MathUtils.degToRad(8 + r() * 14)], 0.46);
-    if (pick) cumulus(pick[0], pick[1], 3000 + r() * 1100, 520 + r() * 380, 250 + r() * 160);
+  // medium piles higher up
+  for (let i = 0; i < 12; i++) {
+    const pick = roll(() => [(i / 12) * Math.PI * 2 + (r() - 0.5) * 0.5 + 0.2, rad(14 + r() * 16)], PLANET_ANG + 0.12);
+    if (pick) pile(pick[0], pick[1], 3000 + r() * 1300, 560 + r() * 520, 230 + r() * 200, 16 + Math.floor(r() * 8));
   }
-  for (let i = 0; i < 14; i++) {
-    const pick = roll(() => [(i / 14) * Math.PI * 2 + (r() - 0.5) * 0.5 + 0.2, THREE.MathUtils.degToRad(22 + r() * 26)], 0.46);
-    if (pick) cumulus(pick[0], pick[1], 2600 + r() * 1300, 380 + r() * 340, 170 + r() * 150);
-  }
-  // puffs that flank the big planet (it sits upper right of the spawn view) without covering it
-  for (const [daz, el, W, Hh] of [[-50, 12, 700, 290], [46, 9, 620, 260], [-48, 32, 380, 170], [52, 30, 340, 150]]) {
-    cumulus(planetAz + THREE.MathUtils.degToRad(daz), THREE.MathUtils.degToRad(el), 3300 + r() * 500, W, Hh);
-  }
+  // piles that veil the planet's lower limb / flank it
+  pile(planetAz + rad(-6), rad(3.0), 3500, 2000, 900, 40);
+  pile(planetAz + rad(36), rad(5.0), 3600, 1800, 800, 36);
+  pile(planetAz - rad(46), rad(8.0), 3400, 1700, 760, 34);
 
   finishClouds();
 

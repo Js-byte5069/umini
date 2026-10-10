@@ -19,27 +19,23 @@ export function makeTerrainMaterial() {
   const m = new THREE.MeshToonMaterial({ vertexColors: true, gradientMap: RAMP_TERRAIN });
   m.shadowSide = THREE.FrontSide;
   m.onBeforeCompile = (sh) => terrainCompile(m, sh);
-  m.customProgramCacheKey = () => 'terrain-paint2';
+  m.customProgramCacheKey = () => 'terrain-paint3';
   return m;
 }
 const TDBG = (typeof location !== 'undefined' && new URLSearchParams(location.search).get('tdbg')) || '0';
-const U_DBG = { value: 0 };
-if (typeof window !== 'undefined') window.__tdbg = U_DBG;
 function terrainCompile(mat, sh) {
-  sh.uniforms.uDbg = U_DBG;
   sh.uniforms.uNTex = { value: _noTex };
   sh.uniforms.uChunk = { value: new THREE.Vector4(0, 0, 64, 129) };
   sh.uniforms.uTexOn = { value: 0 };
   mat.userData.uniforms = sh.uniforms;
   sh.vertexShader = sh.vertexShader
-    .replace('#include <common>', '#include <common>\nattribute vec4 tr;\nvarying vec4 vTr;\nvarying vec3 vTP;\nvarying vec3 vTN;')
-    .replace('#include <begin_vertex>', '#include <begin_vertex>\n vTr = tr; vTP = (modelMatrix * vec4(transformed, 1.0)).xyz; vTN = objectNormal;');
+    .replace('#include <common>', '#include <common>\nattribute vec4 tr;\nattribute float fh;\nvarying float vFH;\nvarying vec4 vTr;\nvarying vec3 vTP;\nvarying vec3 vTN;')
+    .replace('#include <begin_vertex>', '#include <begin_vertex>\n vTr = tr; vFH = fh; vTP = (modelMatrix * vec4(transformed, 1.0)).xyz; vTN = objectNormal;');
   sh.fragmentShader = sh.fragmentShader
     .replace('#include <common>', `#include <common>
 #define TDBG ${TDBG}
-uniform float uDbg;
-#define DBGB(k) (mod(floor(uDbg / exp2(float(k)) + 0.01), 2.0) > 0.5)
 varying vec4 vTr;
+varying float vFH;
 varying vec3 vTP;
 varying vec3 vTN;
 uniform sampler2D uNTex;
@@ -123,62 +119,84 @@ vec2 trackGroove(vec2 p, float zLo, float zHi, float ph, float off, float w, flo
   float holT = vTr.z;
   float dBL = vTr.w - vTP.y;          // metres below the lip of the face this pixel belongs to (vertex fallback for tiles without a gradient texture)
   float slopeN = vTr.x;               // rock mask source: per-pixel smooth slope where the gradient texture exists (vertex-blurred mask otherwise)
-  if (uTexOn > 0.5 && camD < 460.0) {
+  if (uTexOn > 0.5 && camD < 2600.0) {
     vec4 gs = sampleGradSmooth(vTP.xz);
     gr0 = gs.xy;
-    dBL = gs.z;
+    dBL = gs.z - vTP.y;                // lip height (smooth in xz) minus the exact height of this pixel
     gGr = gr0;
     gSm = 1.0;
     float gl0 = length(gr0);
     slopeN = smoothstep(0.69, 0.44, 1.0 / sqrt(1.0 + gl0 * gl0));
     if (camD < 130.0) {
       holT = gs.w;
-      float kEx = DBGB(3) ? 1.0 : 1.0 + 1.15 * (1.0 - smoothstep(0.14, 0.5, gl0)) * (1.0 - smoothstep(60.0, 130.0, camD));
+      float kEx = 1.0 + 1.15 * (1.0 - smoothstep(0.14, 0.5, gl0)) * (1.0 - smoothstep(60.0, 130.0, camD));
       gGr = gr0 * kEx;
       Nsn = normalize(vec3(-gGr.x, 1.0, -gGr.y));
       flatN = 1.0 / sqrt(1.0 + dot(gr0, gr0));
     }
   }
   float hol = clamp(holT, -1.0, 1.0);
+  hol = hol > 0.0 ? hol * (1.0 - 0.6 * smoothstep(0.25, 0.60, slopeN)) : hol;     // concave creases on cliff faces tint a soft pale blue, never a hard dark line
   // rock mask: the blurred slope mask thresholded with a slow organic wobble (never per-triangle teeth); the snow cap hangs lower on the
   // upper face in irregular, soft-edged tongues (thick snow lying over every lip)
   // cap thickness depends on horizontal position only (a y-dependent noise would draw icicle-like drips); the lower edge is a smooth wavy contour
-  float capN = vn(vTP.xz * 0.075 + 4.4) * 0.7 + vn(vTP.xz * 0.21 + 1.7) * 0.3;
-  float capDepth = 0.5 + 2.9 * smoothstep(0.34, 0.70, capN);
-  float capK = (1.0 - smoothstep(capDepth - 1.4, capDepth + 1.0, dBL)) * smoothstep(-1.5, 0.3, dBL);
-  float msk = slopeN + (svn3(vTP * vec3(0.045, 0.03, 0.045)) - 0.5) * 0.24 + (svn3(vTP * vec3(0.12, 0.08, 0.12)) - 0.5) * 0.08;
+  float capN = vn(vTP.xz * 0.043 + 4.4) * 0.84 + vn(vTP.xz * 0.097 + 1.7) * 0.16;
+  // thick, soft snow lying over every lip: a deep irregular cap with a few broad blunt tongues hanging lower (never thin drips)
+  float cs = clamp(vFH / 40.0, 0.22, 1.0);                            // the cap scales with its face: low steps carry a thin cap, tall faces a thick one
+  float capDepth = (1.3 + 3.5 * smoothstep(0.20, 0.80, capN)) * cs;
+  float capK = (1.0 - smoothstep(capDepth - 2.2 * cs, capDepth + 1.8 * cs, dBL)) * smoothstep(-1.5 * cs, 0.3, dBL);
+  // boundary wobble only acts where the slope is already near the rock threshold: gentle benches never grow rock blotches
+  float wob = (svn3(vTP * vec3(0.045, 0.03, 0.045)) - 0.5) * 0.24 + (svn3(vTP * vec3(0.12, 0.08, 0.12)) - 0.5) * 0.08;
+  float msk = slopeN + wob * smoothstep(0.10, 0.42, slopeN);
   msk -= capK * 0.95 * smoothstep(0.35, 0.6, slopeN);
   float fm = fwidth(msk) * 1.2 + 0.02;
   float m = smoothstep(0.5 - fm, 0.5 + fm, msk);
   gRockK = m;
   vec3 rc = vec3(0.0);
   float farV = 1.0 - smoothstep(110.0, 300.0, camD);
-  // ── rock: big calm colour masses. soft planar value (sunward faces a step lighter / warmer, faces turned away cooler and deeper),
-  //    slate-blue bodies with muted coral patches that lean vertical, slow hue / value drift: no stripes, no bricks, no facets ──
+  // ── rock: painted as a few big vertical slabs. Tall narrow columns (stretched ~9x in height) alternate between slate-blue and muted coral with
+  //    crisp, cel-like edges; a few low-frequency wobbling strata bands bias where the coral sits; each slab carries its own value step (lighter /
+  //    deeper) and the sun-facing planes run warmer. Large clean colour blocks, no noise, no bricks, no facets ──
   if (m > 0.002) {
     vec2 nxz = normalize(N0.xz + vec2(1e-4, 0.0));
     float face = dot(nxz, vec2(-0.99, 0.12));                           // +1 = turned toward the sun
     float steep = 1.0 - smoothstep(0.30, 0.60, N0.y);
-    float reg = vn(vTP.xz * 0.0065 + 3.3);                              // regional bias: coral-rich vs slate-rich masses
-    float drift = svn3(vTP * vec3(0.028, 0.04, 0.028) + 9.1) - 0.5;
-    float cn = svn3(vTP * vec3(0.095, 0.022, 0.095) + 21.0) * 0.62 + svn3(vTP * vec3(0.21, 0.05, 0.21) + 5.7) * 0.26 + vn(vec2(vTP.y * 0.075 + reg * 6.0, 3.0)) * 0.12;
-    float eC = 0.03 + fwidth(cn) * 1.5;
-    float coral = smoothstep(0.545 - eC - (reg - 0.5) * 0.12, 0.545 + eC - (reg - 0.5) * 0.12, cn + drift * 0.10);
-    float pv = clamp(0.52 + 0.30 * face + 0.22 * drift + 0.10 * (smoothstep(18.0, 0.0, dBL) - 0.4), 0.0, 1.0);
-    vec3 slate = pv < 0.5 ? mix(vec3(0.082, 0.084, 0.190), vec3(0.168, 0.168, 0.305), pv * 2.0) : mix(vec3(0.168, 0.168, 0.305), vec3(0.295, 0.295, 0.465), pv * 2.0 - 1.0);
-    vec3 cor = pv < 0.5 ? mix(vec3(0.400, 0.095, 0.078), vec3(0.540, 0.130, 0.082), pv * 2.0) : mix(vec3(0.540, 0.130, 0.082), vec3(0.650, 0.168, 0.098), pv * 2.0 - 1.0);
+    vec3 q = vTP;
+    float reg = vn(q.xz * 0.0055 + 3.3);                                // regional bias: coral-rich vs slate-rich masses
+    float detK = 1.0 - smoothstep(110.0, 300.0, camD);                  // thin slabs only where they can be read
+    // strata: a few wobbling stone courses (about 20 m thick); inside a course the colour field depends on the horizontal position only, so every
+    // slab edge is dead vertical, and from one course to the next the slabs jog sideways a little (stacked, jointed columns)
+    float yw = q.y + 10.0 * (vn(q.xz * 0.011 + 2.0) - 0.5) + 3.0 * (vn(q.xz * 0.04 + 9.0) - 0.5);
+    float sy = yw * 0.047 + reg * 3.0;
+    float sI = floor(sy);
+    vec2 jog = vec2(h11(sI * 7.31 + 3.7), h11(sI * 3.17 + 9.1)) * 2.6;
+    vec2 cq = q.xz + jog;
+    float cA = vn(cq * 0.068 + vec2(3.1, 9.3));
+    float cB = vn(cq * 0.17 + vec2(8.3, 1.7));
+    float colF = mix(cA, cA * 0.86 + cB * 0.14, detK);
+    float band = vn(vec2(yw * 0.032 + reg * 5.0, 1.7));
+    float cf = colF * 0.88 + band * 0.12 + (vn(vec2(q.y * 0.045, sI * 3.3 + 1.0)) - 0.5) * 0.06;
+    float thr = 0.575 - (reg - 0.5) * 0.12;
+    float eC = 0.004 + min(fwidth(cf), 0.06) * 1.3;                     // one-pixel cel edge (the clamp keeps the course joints from smearing)
+    // coral lives on the near-vertical faces (the colour columns are vertical): the sloping benches / talus between faces stay slate, so no camouflage spots
+    float coral = smoothstep(thr - eC, thr + eC, cf) * (1.0 - 0.7 * smoothstep(110.0, 420.0, camD)) * smoothstep(0.52, 0.30, N0.y);
+    // slab value steps (soft-edged): a lighter plane, the body, a deeper plane
+    float vv = vn(cq * 0.15 + vec2(13.0, 5.0)) * 0.80 + vn(cq * 0.40 + vec2(2.0, 17.0)) * 0.20 * detK + 0.10 * (1.0 - detK);
+    float eP = 0.004 + min(fwidth(vv), 0.06) * 1.3;
+    float lighter = smoothstep(0.575 - eP, 0.575 + eP, vv), deeper = 1.0 - smoothstep(0.415 - eP, 0.415 + eP, vv);
+    float hueD = svn3(vec3(q.x * 0.06, q.y * 0.009, q.z * 0.06) + 41.0);
+    float drift = svn3(q * vec3(0.012, 0.016, 0.012) + 9.1) - 0.5;      // slow hue / value drift over whole masses
+    float pv = clamp(0.54 + 0.26 * face + 0.20 * drift + 0.10 * (smoothstep(18.0, 0.0, dBL) - 0.4), 0.0, 1.0);
+    vec3 slate = pv < 0.5 ? mix(vec3(0.080, 0.084, 0.200), vec3(0.168, 0.174, 0.340), pv * 2.0) : mix(vec3(0.168, 0.174, 0.340), vec3(0.236, 0.246, 0.462), pv * 2.0 - 1.0);
+    vec3 cor = pv < 0.5 ? mix(vec3(0.250, 0.062, 0.100), vec3(0.440, 0.104, 0.098), pv * 2.0) : mix(vec3(0.440, 0.104, 0.098), vec3(0.610, 0.168, 0.118), pv * 2.0 - 1.0);
+    slate *= mix(vec3(1.07, 0.98, 0.90), vec3(0.93, 1.0, 1.10), smoothstep(0.30, 0.70, hueD));   // slate drifts between violet-grey and cool blue from slab to slab
+    cor *= mix(vec3(1.02, 0.92, 0.96), vec3(1.0, 1.06, 0.94), smoothstep(0.35, 0.65, hueD));      // coral between rose-red and warm orange-red
     rc = mix(slate, cor, coral);
-    rc *= mix(0.86, 1.05, smoothstep(26.0, 0.0, dBL));                  // heavier at the foot, lighter toward the lip
-    rc *= mix(vec3(0.96, 0.97, 1.05), vec3(1.04, 1.0, 0.95), clamp(0.5 + drift * 1.4, 0.0, 1.0));
-    // vertical column planes: a few big slabs a step lighter / deeper than the body, soft-edged, up close and on steep faces only
-    // (a comb of thin streaks at distance would read as noise)
-    float col = svn3(vTP * vec3(0.15, 0.032, 0.15) + 13.0) * 0.8 + svn3(vTP * vec3(0.33, 0.05, 0.33) + 2.0) * 0.2;
-    float eP = 0.035 + fwidth(col) * 1.5;
-    float lighter = smoothstep(0.60 - eP, 0.60 + eP, col), deeper = 1.0 - smoothstep(0.38 - eP, 0.38 + eP, col);
-    float planeK = steep * (1.0 - smoothstep(90.0, 230.0, camD));
-    rc *= 1.0 + (lighter * 0.12 - deeper * 0.16) * planeK;
-    rc *= mix(vec3(1.0), vec3(1.03, 1.0, 0.95), lighter * planeK) * mix(vec3(1.0), vec3(0.97, 0.97, 1.06), deeper * planeK);
-    rc *= 1.0 - clamp(vTr.z, 0.0, 1.0) * 0.22 + clamp(-vTr.z, 0.0, 1.0) * 0.16;   // cavities dark, lips bright
+    float stepK = steep * (1.0 - smoothstep(60.0, 190.0, camD));
+    rc *= 1.0 + (lighter * 0.17 - deeper * 0.21) * stepK;
+    rc *= mix(vec3(1.0), vec3(1.035, 1.0, 0.95), lighter * stepK * coral) * mix(vec3(1.0), vec3(0.97, 0.97, 1.05), deeper * stepK);
+    rc *= mix(0.88, 1.04, smoothstep(30.0, 0.0, dBL));                  // heavier at the foot, lighter toward the lip
+    rc *= 1.0 - clamp(vTr.z, 0.0, 1.0) * 0.20 + clamp(-vTr.z, 0.0, 1.0) * 0.14;   // cavities dark, lips bright
     rc *= vTr.y;
   }
   // ── snow: pale-blue hollows, lit crests that stay below clipping, bold sastrugi, dimpled footprints / sled tracks ──
@@ -230,7 +248,7 @@ vec2 trackGroove(vec2 p, float zLo, float zHi, float ph, float off, float w, flo
     // footprints + sled tracks: height-field dimples -> normal tilt (lit rim, shaded crescent), only on gentle snow
     float flatK = smoothstep(0.935, 0.985, flatN) * (1.0 - m);
     float fpK = smoothstep(0.86, 0.93, flatN) * (1.0 - m);              // footprints also dent drift flanks
-    if (camD < 60.0 && fpK > 0.01 && !DBGB(2)) {
+    if (camD < 60.0 && fpK > 0.01) {
       vec3 fd = footDimple(vTP.xz, -176.0, 246.0, 0.4, (1.0 - smoothstep(14.0, 44.0, camD)) * fpK);
       float tf = (1.0 - smoothstep(26.0, 58.0, camD)) * fpK;
       vec2 t1 = trackGroove(vTP.xz, -186.0, 150.0, 2.1, 1.05, 0.22, tf);
@@ -239,14 +257,14 @@ vec2 trackGroove(vec2 p, float zLo, float zHi, float ph, float off, float w, flo
       sn = mix(sn, sn * vec3(0.80, 0.89, 1.0), fd.z * 0.20 + (t1.y + t2.y) * 0.14);
     }
     // slow organic swell in the shading normal: big smooth slopes would otherwise draw their cel terminators as straight-edged polygons
-    if (camD < 220.0 && !DBGB(1)) {
+    if (camD < 220.0) {
       vec2 sw = vec2(fbm2(vTP.xz * 0.045 + 7.3), fbm2(vTP.xz * 0.045 + 19.1)) - 0.5;
       vec2 sw2 = vec2(fbm2(vTP.xz * 0.13 + 3.3), fbm2(vTP.xz * 0.13 + 41.7)) - 0.5;
       gFacet += vec3(sw.x * 0.34 + sw2.x * 0.14, 0.0, sw.y * 0.34 + sw2.y * 0.14) * (1.0 - m) * (1.0 - smoothstep(70.0, 220.0, camD));
     }
     // wind ripples / sastrugi: normal tilt along the (locally fanning) wind so the cel terminator draws bold pale-blue bands in
     // short drifting patches (never long regular contour lines)
-    if (camD < 200.0 && !DBGB(0)) {
+    if (camD < 200.0) {
       float ang = (vn(vTP.xz * 0.025 + 21.0) - 0.5) * 1.5;
       vec2 wd = vec2(cos(ang) * 0.906 - sin(ang) * 0.423, sin(ang) * 0.906 + cos(ang) * 0.423);
       float pw = dot(vTP.xz, wd);
@@ -254,9 +272,11 @@ vec2 trackGroove(vec2 p, float zLo, float zHi, float ph, float off, float w, flo
       float wob = fbm2(vTP.xz * 0.06) * 9.0 + sin(pwr * 0.07) * 3.0 + sin(pwr * 0.23 + pw * 0.1) * 0.8;
       float f1 = 3.1 * (0.8 + 0.5 * vn(vTP.xz * 0.013 + 4.0));
       float p1 = (pw + wob * 1.4) * f1;
-      float d1 = cos(p1) + 0.45 * cos(2.0 * p1 + 1.3);
+      float aa1 = 1.0 - smoothstep(0.55, 1.3, fwidth(p1));                          // a ripple whose phase runs faster than ~1 rad per pixel would only alias: fade it out
+      float d1 = (cos(p1) + 0.45 * cos(2.0 * p1 + 1.3)) * aa1;
       float p2 = (pw * 0.55 + wob * 0.8 + 7.0) * (1.05 + 0.3 * vn(vTP.xz * 0.02 + 8.0));
-      float d2 = cos(p2) + 0.4 * cos(2.0 * p2 + 0.7);
+      float aa2 = 1.0 - smoothstep(0.55, 1.3, fwidth(p2));
+      float d2 = (cos(p2) + 0.4 * cos(2.0 * p2 + 0.7)) * aa2;
       float dash = smoothstep(0.40, 0.60, fbm2(vTP.xz * 0.14 + 13.0));
       float mk1 = smoothstep(0.34, 0.50, fbm2(vTP.xz * 0.045 + 3.1)) * dash;
       float mk2 = smoothstep(0.36, 0.56, fbm2(vTP.xz * 0.028 + 9.7)) * smoothstep(0.30, 0.55, fbm2(vTP.xz * 0.09 + 31.0));
@@ -272,13 +292,9 @@ vec2 trackGroove(vec2 p, float zLo, float zHi, float ph, float off, float w, flo
   }
   diffuseColor.rgb = mix(sn, rc, m);
 #if TDBG == 1
-  diffuseColor.rgb = vec3(clamp(dBL / 30.0, 0.0, 1.0), capK, msk);
+  diffuseColor.rgb = vec3(m, capK, clamp(dBL / 30.0, 0.0, 1.0));
 #elif TDBG == 2
-  diffuseColor.rgb = vec3(slopeN, m, capK);
-#elif TDBG == 4
-  diffuseColor.rgb = vec3(gr0 * 1.5 + 0.5, 0.5);
-#elif TDBG == 3
-  diffuseColor.rgb = vec3(clamp(dBL * 0.1, 0.0, 1.0), clamp(1.0 + dBL * 0.1, 0.0, 1.0), clamp(-dBL * 0.1, 0.0, 1.0));
+  diffuseColor.rgb = vec3(slopeN, capK, m);
 #endif
 }`)
     .replace('#include <gradientmap_pars_fragment>', `
@@ -288,12 +304,12 @@ vec3 getGradientIrradiance( vec3 normal, vec3 lightDirection ) {
   float s0 = smoothstep(-0.75 - fw, -0.75 + fw, d) * 0.5 + smoothstep(0.42 - fw, 0.42 + fw, d) * 0.5;
   // rock: painted light / mid / shade regions with soft transitions (snow keeps its crisp cel planes)
   float fr = fw + 0.07;
-  float r0 = smoothstep(-0.45 - fr, -0.45 + fr, d) * 0.18 + smoothstep(-0.02 - fr, -0.02 + fr, d) * 0.27
-           + smoothstep(0.34 - fr, 0.34 + fr, d) * 0.30 + smoothstep(0.66 - fr, 0.66 + fr, d) * 0.25;
+  float r0 = 0.10 + smoothstep(-0.45 - fr, -0.45 + fr, d) * 0.18 + smoothstep(-0.02 - fr, -0.02 + fr, d) * 0.25
+           + smoothstep(0.34 - fr, 0.34 + fr, d) * 0.27 + smoothstep(0.66 - fr, 0.66 + fr, d) * 0.20;
   return vec3(mix(s0, r0, gRockK));
 }`)
     .replace('#include <emissivemap_fragment>', `#include <emissivemap_fragment>
-totalEmissiveRadiance += diffuseColor.rgb * mix(vec3(0.030, 0.050, 0.1175), vec3(0.105, 0.118, 0.200), gRockK);
+totalEmissiveRadiance += diffuseColor.rgb * mix(vec3(0.030, 0.050, 0.1175), vec3(0.135, 0.145, 0.235), gRockK);
 {
   // soft value drift across low relief that also lives inside cast shadow: faces turned toward the open sky / fill side glow a little,
   // faces turned into the slope sink toward deeper blue (continuous, under the crisp cel bands)
