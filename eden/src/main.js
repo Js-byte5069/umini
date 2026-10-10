@@ -25,7 +25,7 @@ renderer.setSize(innerWidth, innerHeight);
 renderer.outputColorSpace = THREE.SRGBColorSpace;
 renderer.toneMapping = THREE.NoToneMapping;
 renderer.shadowMap.enabled = !params.has('ns');
-renderer.shadowMap.type = params.has('pcf') ? THREE.PCFShadowMap : THREE.PCFSoftShadowMap;      // bilinear-filtered taps: no stair-stepped shadow edges
+renderer.shadowMap.type = params.has('pcf') ? THREE.PCFShadowMap : THREE.PCFSoftShadowMap;      // bilinear-filtered taps: no stair-stepped shadow edges (plain PCF with a radius bands into 9 discrete levels)
 
 const scene = new THREE.Scene();
 scene.background = FOG_COLOR;

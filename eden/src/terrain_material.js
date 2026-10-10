@@ -148,7 +148,7 @@ vec2 trackGroove(vec2 p, float zLo, float zHi, float ph, float off, float w, flo
   // boundary wobble only acts where the slope is already near the rock threshold: gentle benches never grow rock blotches
   float wob = (svn3(vTP * vec3(0.045, 0.03, 0.045)) - 0.5) * 0.24 + (svn3(vTP * vec3(0.12, 0.08, 0.12)) - 0.5) * 0.08;
   float msk = slopeN + wob * smoothstep(0.10, 0.42, slopeN);
-  msk -= capK * 0.95 * smoothstep(0.35, 0.6, slopeN);
+  msk -= capK * 0.95 * smoothstep(0.35, 0.6, slopeN) * (1.0 - smoothstep(0.74, 0.93, slopeN));      // snow drapes the shoulders only: a sheer face stays clean rock (no vertical drip tongues)
   float fm = fwidth(msk) * 1.2 + 0.02;
   float m = smoothstep(0.5 - fm, 0.5 + fm, msk);
   gRockK = m;

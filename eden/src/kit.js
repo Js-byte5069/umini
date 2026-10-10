@@ -229,29 +229,31 @@ const SN = makeNoise(99);
 /** thick, soft, rounded snow pillow: plump shoulder, organic (noise-warped) outline, lumpy crown, buried skirt so it never floats.
  *  Footprint w×d, peak height t. The outline only ever pulls inward (never outside w×d); the steep lip is shaded a little darker / cooler through the baked colour. */
 export function snowPillow(w, d, t, { seed = 1, seg = 20, p = 2.8, lump = 0.14, bury = 0.5 } = {}) {
-  const nx = Math.max(8, Math.round(seg * Math.min(2, Math.max(0.6, w / Math.max(w, d)) + 0.2))),
-        nz = Math.max(8, Math.round(seg * Math.min(2, Math.max(0.6, d / Math.max(w, d)) + 0.2)));
-  const pos = [], idx = [], mm = [];
-  const W = nx + 1;
-  for (let j = 0; j <= nz; j++)
-    for (let i = 0; i <= nx; i++) {
-      // vertices crowd toward the outline (the profile changes fastest there): a smoother lip for the same vertex count
-      const tu = (i / nx) * 2 - 1, tv = (j / nz) * 2 - 1;
-      const u = lerp(tu, Math.sin(tu * Math.PI / 2), 0.6), v = lerp(tv, Math.sin(tv * Math.PI / 2), 0.6);
-      // organic outline: slow bulges + a short scalloped lip, shrinking the footprint only (>= 1)
+  // POLAR tessellation: the outline is a smooth ring of M points, not the edge of a square grid. Where the lip meets the terrain / roof the
+  // intersection curve is therefore smooth (a square grid draws it as a 1-cell staircase, visible on every snow pad and pier foot).
+  const M = Math.max(24, Math.min(48, Math.round(seg * 1.8))), R = Math.max(6, Math.min(12, Math.round(seg * 0.55)));
+  const pos = [0, 0, 0], idx = [], mm = [0];
+  const ring = (i) => 1 + (i - 1) * M;                                  // first vertex index of ring i (1..R); vertex 0 is the centre
+  for (let i = 1; i <= R; i++) {
+    const q = i / R, sr = lerp(q, Math.sin(q * Math.PI / 2), 0.6);      // rings crowd toward the outline (the profile changes fastest there)
+    for (let k = 0; k < M; k++) {
+      const a = (k / M) * Math.PI * 2, c = Math.cos(a), sn = Math.sin(a);
+      const norm = Math.pow(Math.pow(Math.abs(c), p) + Math.pow(Math.abs(sn), p), 1 / p);      // superellipse: unit radius along this direction
+      const u = (c / norm) * sr, v = (sn / norm) * sr;
       const wob = 1 + 0.10 * (0.5 + 0.5 * SN.n2(u * 1.5 + seed * 3.1, v * 1.5 + seed * 1.3)) + 0.05 * (0.5 + 0.5 * SN.n2(u * 4.6 + seed, v * 4.6 + 7.7));
-      const rr = Math.pow(Math.pow(Math.abs(u), p) + Math.pow(Math.abs(v), p), 1 / p) * wob;
-      const m = Math.max(0, 1 - rr);
+      const m = Math.max(0, 1 - sr * wob);
       const edge = Math.pow(m, 0.42);
       const n = 1 + lump * SN.n2(u * 1.6 + seed * 3.1, v * 1.6 + seed * 1.7) + lump * 0.5 * SN.n2(u * 4 + seed, v * 4);
-      const y = t * edge * n - (m < 1e-4 ? bury : 0);
-      pos.push(u * w / 2, y, v * d / 2);
+      pos.push(u * w / 2, t * edge * n - (m < 1e-4 ? bury : 0), v * d / 2);
       mm.push(m);
     }
-  for (let j = 0; j < nz; j++)
-    for (let i = 0; i < nx; i++) {
-      const a = j * W + i, b = a + 1, c = a + W, e = c + 1;
-      idx.push(a, c, b, b, c, e);
+  }
+  { const m0 = 1, n0 = 1 + lump * SN.n2(seed * 3.1, seed * 1.7); pos[1] = t * Math.pow(m0, 0.42) * n0; mm[0] = 1; }
+  for (let k = 0; k < M; k++) idx.push(0, ring(1) + ((k + 1) % M), ring(1) + k);
+  for (let i = 1; i < R; i++)
+    for (let k = 0; k < M; k++) {
+      const a = ring(i) + k, b = ring(i) + ((k + 1) % M), c = ring(i + 1) + k, e = ring(i + 1) + ((k + 1) % M);
+      idx.push(a, b, c, b, e, c);
     }
   const g = new THREE.BufferGeometry();
   g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));

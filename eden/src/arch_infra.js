@@ -326,7 +326,7 @@ function viaductAsset({ x0, x1, deckY, width = 13, span = 22, ground, gaps = [],
           B.add('snow', snowDrift([
             [0, 0, 4.4 * (big > 1 ? 1.2 : 1), 4.2 * (big > 1 ? 1.2 : 1), 1.45 * big], [2.9 * (sz > 0 ? -1 : 1), 1.2 * sz, 3.4, 2.4, 0.85 * big, 0.5 * sz],
             [-1.8 * (sz > 0 ? -1 : 1), -2.6 * sz, 2.6, 2.0, 0.7 * big, -0.4], [0.6, 3.2 * sz, 2.8, 1.8, 0.55],
-          ], { seed: px * 0.13 + zc, cell: lod === 0 ? 0.7 : 1.2, bury: 1.9 }), M(px, yFoot - 1.78, zc), { noAO: true, tint: snowTint(Math.round(px)) });
+          ], { seed: px * 0.13 + zc, cell: lod === 0 ? 0.38 : 0.8, bury: 1.9, cap: 14000 }), M(px, yFoot - 1.78, zc), { noAO: true, tint: snowTint(Math.round(px)) });
         }
         col(px - 1.8, g - 1, zc - 1.5, px + 1.8, top, zc + 1.5);
       }
