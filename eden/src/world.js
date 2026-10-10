@@ -25,7 +25,17 @@ export async function buildWorld(scene, onProgress = () => {}) {
   // ── buildings (door faces the street) ────────────────────────────────────────────
   const bld = (x, z, spec, opts = {}) => {
     const t0 = spec.tiers[0];
-    keepClear.push({ x, z, hx: t0.w / 2 + 3, hz: t0.d / 2 + 3 });
+    let kc = { x, z, hx: t0.w / 2 + 3, hz: t0.d / 2 + 3 };
+    if (spec.tower && spec.cols?.length) {          // hero towers: keep scatter clear of every solid (rock massifs, fallen slabs), in WORLD axes; scatter shrinks big rects by 0.8
+      const yw = opts.yaw ?? 0, cs = Math.cos(yw), sn = Math.sin(yw);
+      let x0 = 1e9, x1 = -1e9, z0 = 1e9, z1 = -1e9;
+      for (const c of spec.cols) for (const lx of [c[0], c[3]]) for (const lz of [c[2], c[5]]) {
+        const wx = x + lx * cs + lz * sn, wz = z - lx * sn + lz * cs;
+        x0 = Math.min(x0, wx); x1 = Math.max(x1, wx); z0 = Math.min(z0, wz); z1 = Math.max(z1, wz);
+      }
+      kc = { x: (x0 + x1) / 2, z: (z0 + z1) / 2, hx: ((x1 - x0) / 2 + 3) / 0.8, hz: ((z1 - z0) / 2 + 3) / 0.8 };
+    }
+    keepClear.push(kc);
     job(() => {
     const y = ground(x, z) - 0.9;
     put(makeStructure(buildingAsset(spec), { x, y, z, yaw: opts.yaw ?? 0, lods: [0, 120, 280, 600] }));

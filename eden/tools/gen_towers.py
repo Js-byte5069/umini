@@ -1,11 +1,11 @@
 """Blender (bpy) hero-tower generator: the "pre-civilisation sentinel tower" of the EDEN reference sheet.
 
-Massive dark slate basement on a rock-and-snow plinth (rock collar + soft snow banks), a cantilevered observation gallery (ring corridor,
-continuous railing, lower ring beam, robust corbels and pale corner piers), a wide stepped pale cool-grey body (5 tapered tiers) with real
-recessed window bays (bevelled dark frames, dark glass) and vertical slit bands, dark corner pilasters that climb into slender spire spines,
-ONE huge coral slab on the front (+ one on a flank), a second maintenance ring platform under the upper body, a stepped lantern crown with a long
-antenna mast with two cross yards, and soft thick snow drifts on every ledge and platform.  Few large clean forms; detail only where it
-explains the structure (no greebles).
+Massive dark slate basement on a stratified rock plinth (muted-mauve / slate-blue strata with a slim coral band, snow caps, soft snow banks),
+a cantilevered observation gallery (ring corridor, continuous railing, lower ring beam, pale corbels, fat outboard piers), a pale monolithic
+shaft (4 tapered tiers, few windows, no proud outlines) with ONE wide coral door-slab in a full-height dark channel on the front, deep-slate spine
+pillars of staggered heights, a maintenance ring platform, and a crown of three off-axis volumes of unequal height on a dark podium: a tall pale
+needle spire with a thin antenna mast, a flat-topped slate block with the second coral slab, and a lower pale monolith.  Two fallen leaning slabs
+stand behind each tower.  Few large clean forms; detail only where it explains the structure (no greebles).
 
 Writes assets/towers.glb with objects named b{id}_l{lod}_{material} (same convention as buildings.glb, so the engine loads them through the
 building path; hand-written GLB with int16 positions / int8 normals / ubyte AO+wear like gen_buildings.py) and assets/towers.json (placement,
@@ -34,11 +34,11 @@ TAU = math.tau
 # placement written to towers.json is shifted by `grow` along the tower's back (dock end, bridge and street lane stay frozen).
 TOWERS = [
     dict(id=20, x=-88, z=119.8, yaw=90, H=112, W=39, D=34, seed=3, old_d1h=10.53, flank=-1,
-         tiers=[(0.82, 0.84, 2.4, 0.975, 9.2, 27.4), (0.58, 0.60, 3.4, 0.93, 27.0, 41.0), (0.54, 0.56, 3.0, 0.91, 40.6, 70.0), (0.36, 0.36, 2.4, 0.90, 69.6, 78.0), (0.20, 0.21, 1.8, 0.85, 80.6, 88.5)],
+         tiers=[(0.82, 0.84, 2.4, 0.975, 9.2, 27.4), (0.58, 0.60, 3.4, 0.93, 27.0, 41.0), (0.54, 0.56, 3.0, 0.91, 41.0, 70.0), (0.36, 0.36, 2.4, 0.90, 69.6, 78.0)],
          gallery=dict(y=9.9, wrap=0, support='base', piers=True), plat=dict(y=70.3, wrap=3, support=2),
          bridge=dict(local_x=7.8, deck=19.5, wz=112.0, dir=1, end_x=-50.7)),
     dict(id=21, x=90, z=104.2, yaw=-90, H=96, W=32.5, D=30, seed=8, old_d1h=9.36, flank=1,
-         tiers=[(0.82, 0.84, 2.4, 0.975, 9.2, 27.4), (0.58, 0.60, 3.4, 0.93, 27.0, 39.0), (0.54, 0.56, 3.0, 0.91, 38.6, 62.0), (0.36, 0.36, 2.4, 0.90, 61.6, 69.6), (0.20, 0.21, 1.8, 0.85, 71.6, 79.0)],
+         tiers=[(0.82, 0.84, 2.4, 0.975, 9.2, 27.4), (0.58, 0.60, 3.4, 0.93, 27.0, 39.0), (0.54, 0.56, 3.0, 0.91, 39.0, 62.0), (0.36, 0.36, 2.4, 0.90, 61.6, 69.6)],
          gallery=dict(y=31.3, wrap=1, support=0, piers=True), plat=dict(y=62.3, wrap=3, support=2),
          bridge=dict(local_x=7.8, deck=19.5, wz=112.0, dir=-1, end_x=50.7)),
 ]
@@ -430,7 +430,7 @@ def leaning_slab(P, S, cx, cz, w, t, H, lean_deg, face_deg, mat, seed, frac=7.0,
     return (min(xs), max(xs), min(zs), max(zs)), H + frac * 0.55
 
 
-def rock_mass(P, cx, cz, w, d, y0, y1, seed, n=22, jit=0.8, taper=0.82, bands=(0.0, 0.30, 0.48, 0.74, 1.0), mats=('rockMauve', 'rockRed', 'rockMauve', 'rockBlue'), p=3.0):
+def rock_mass(P, cx, cz, w, d, y0, y1, seed, n=22, jit=0.8, taper=0.82, bands=(0.0, 0.62, 0.74, 0.88, 1.0), mats=('rockMauve', 'rockRed', 'rockMauve', 'rockBlue'), p=3.0):
     """stratified rock massif (the reference plinth): a closed shell of superellipse rings; alternating in/out radial offsets give vertical fracture
     columns, every other stratum steps back a little (ledges), a slim coral-red band between muted-mauve / slate-blue layers, flat top (the snow
     cap is a separate drift).  Returns the top y."""
@@ -442,7 +442,7 @@ def rock_mass(P, cx, cz, w, d, y0, y1, seed, n=22, jit=0.8, taper=0.82, bands=(0
             x, z = sq_pt(w / 2 * sc, d / 2 * sc, p, th)
             L = math.hypot(x, z) or 1.0
             o = (jit * (1.0 if i % 2 == 0 else -0.6) * (0.55 + 0.45 * noise.noise(Vector((i * 1.7 + seed, 0.3, 0.1))))
-                 + 0.35 * noise.noise(Vector((i * 0.9 + seed, k * 1.3, 2.0))) - (0.45 if k % 2 else 0.0))
+                 + 0.35 * noise.noise(Vector((i * 0.9 + seed, k * 1.3, 2.0))) - (0.45 if k % 2 else 0.0)) * (1.0 - 0.8 * f)
             y = y0 + (y1 - y0) * f
             if 0 < f < 1.0: y += 0.35 * noise.noise(Vector((i * 0.8 + seed, k * 2.1, 4.0)))
             ring.append(Vector((cx + x + x / L * o, y, cz + z + z / L * o)))
@@ -459,7 +459,7 @@ def build_tower(T, lod):
     cols = []
     base = Tier(W, D, 4.0, 1.0, BASE_TOP, 0.955)
     tiers = [Tier(W * fw, D * fd_, ch, y0, y1, tp) for fw, fd_, ch, tp, y0, y1 in T['tiers']]
-    t1a, t1b, t2, t3, t4 = tiers
+    t1a, t1b, t2, t3 = tiers
     gal = T['gallery']; gy = gal['y']; pl = T['plat']; py = pl['y']
     pick = lambda k: base if k == 'base' else tiers[k]
     ymin = gy + 5.3                                              # lowest y for facade features above the ring corridor of the gallery
@@ -505,12 +505,13 @@ def build_tower(T, lod):
             L = math.hypot(ox, oz); rx, rz = ox / L, oz / L; tx, tz = -rz, rx
             wb = 2.5 * cw; wt = wb * 1.5; db = 1.9 * cw; dt = 3.3 * cw
             def cring(cx, cz, w, dp, y): return [Vector((cx + tx * sa * w / 2 + rx * sb * dp / 2, y, cz + tz * sa * w / 2 + rz * sb * dp / 2)) for sa, sb in ((-1, -1), (1, -1), (1, 1), (-1, 1))]
-            B.shell([cring(wx - rx * 0.3, wz - rz * 0.3, wb, db, gy - 7.0 * min(1.0, cw)), cring(ox, oz, wt, dt, gy - 0.8)], 'wallDark')
+            B.shell([cring(wx - rx * 0.3, wz - rz * 0.3, wb, db, gy - 7.0 * min(1.0, cw)), cring(ox, oz, wt, dt, gy - 0.8)], 'wall')
         if piers:                                                                                              # fat outboard piers (asymmetric: pale / slate) carrying the platform down to the plinth
             for sx in (-1, 1):
                 for sz in (-1, 1):
                     px, pz = sx * (hw_o - 3.6) * 0.83, sz * (hd_o - 3.6) * 0.83
-                    pm = 'wall' if sx == -T['flank'] else 'wallDark'
+                    if dock_clear and sx > 0 and sz > 0: px = max(px, 13.9)             # keep the bridge landing / portal frame free
+                    pm = 'wall' if sz > 0 else 'wallDark'
                     B.box((px, 1.6, pz), (7.0, 0.7, 7.0), 'wallDark')
                     B.shell([[Vector((px + dx * 3.0, 1.3, pz + dz * 3.0)) for dx, dz in ((-1, -1), (1, -1), (1, 1), (-1, 1))],
                              [Vector((px + dx * 2.3, gy - 0.9, pz + dz * 2.3)) for dx, dz in ((-1, -1), (1, -1), (1, 1), (-1, 1))]], pm)
@@ -542,8 +543,8 @@ def build_tower(T, lod):
         yy0 = t1b.y0 + 2.8; yy1 = t1b.y1 - 2.6
         slits(f1b, '+z', 0.0, 2, 4.6, 1.0, yy0, yy1); slits(f1b, '-z', 0.0, 2, 4.6, 1.0, yy0, yy1)
         bay(f1b, '+x', 0.0, 3.2, yy0, yy1); bay(f1b, '-x', 0.0, 3.2, yy0, yy1)
-    s0 = max(t2.y0 + 3.4, ymin); s1 = t2.y1 - 3.0
-    slab(f2, '+z', 0.0, (t2.hw - t2.c) * 0.74, s0, s1, 2, ncol=2, chan=(t2.y0, t2.y1))             # THE coral slab: 2 x 2 plates in a full-height dark channel
+    s0 = max(t2.y0 + 2.6, ymin); s1 = t2.y1 - 3.0
+    slab(f2, '+z', 0.0, (t2.hw - t2.c) * 0.80, s0, s1, 2, ncol=1, chan=(t2.y0, t2.y1), chan_m=0.8)  # THE coral slab: one wide plank (one seam) in a full-height dark channel
     slits(f2, '+x', 0.0, 2, 3.6, 1.0, s0 + 1.0, s1 - 1.0); slits(f2, '-x', 0.0, 2, 3.6, 1.0, s0 + 1.0, s1 - 1.0)
     slits(f2, '-z', 0.0, 2, 4.2, 1.0, s0 + 1.0, s1 - 1.0)
     for Tt, fd, mt in ((t1a, f1a, 'wallLight'), (t1b, f1b, 'wallLight'), (t2, f2, 'wall'), (t3, {}, 'wall')):
@@ -554,12 +555,13 @@ def build_tower(T, lod):
     for sx in (-1, 1):
         for sz in (-1, 1): pilaster(B, t1a, (sx, sz), t1a.y0 + 0.3, t1a.y1 - 0.3, 3.4, 1.2, mat='wall')
     tips = {}
-    for (sx, sz), eh in {(-1, 1): 21.0, (1, 1): 12.0, (-1, -1): 15.0, (1, -1): 6.0}.items():              # spine pillars climb above the shaft shoulder, tips staggered
-        tips[(sx, sz)] = pilaster(B, t2, (sx * mir, sz), t2.y0 + 2.0, t2.y1, 3.6, 1.8, mat='metal', ext=eh * T['H'] / 112.0, ext_w=0.12)
+    for (sx, sz), eh in {(-1, -1): 21.0, (1, -1): 15.0, (-1, 1): 8.0, (1, 1): 4.5}.items():              # spine pillars climb above the shaft shoulder, tips staggered; the tall ones stand BEHIND the pale needle
+        tips[(sx, sz)] = pilaster(B, t2, (sx * mir, sz), t2.y0 + 2.0, t2.y1, 3.6, 1.8, mat='metal', ext=eh * T['H'] / 112.0, ext_w=0.5)
     for sx in (-1, 1):                                                     # thin coral slivers on the two front pillars (reference side view)
         pilaster(B, t2, (sx, 1), t2.y0 + 4.0, s1, 0.9, 1.95, mat='accent')
     if lod < 2:
-        tx_, tz_, ty_ = tips[(-1, 1)]; F.cyl((tx_, ty_ + 2.6, tz_), 0.14, 6.0, 'metal', seg=6, r2=0.05)
+        for kk, rh in (((-1, -1), 8.0), ((1, -1), 5.5)):                  # thin antenna rods on the two tallest pillars
+            tx_, tz_, ty_ = tips[kk]; F.cyl((tx_, ty_ + rh / 2 - 0.2, tz_), 0.11, rh, 'metal', seg=6, r2=0.04)
     # ── bridge portal: framed opening + landing stub where the truss bridge docks (tier 1a, front face; world position frozen) ──
     br = T.get('bridge')
     if br:
@@ -571,32 +573,34 @@ def build_tower(T, lod):
         B.box((bx, yb_ - 0.27, zf1 + 1.3), (4.7, 0.5, 2.6), 'wallDark')
         B.box((bx, yb_ - 0.02, zf1 + 1.3), (4.3, 0.1, 2.4), 'deck')
         for sx in (-1, 1): B.box((bx + sx * 2.45, yb_ + 0.6, zf1 + 1.3), (0.28, 1.2, 2.6), 'trim')
-        B.shell([[Vector((bx + dx * 1.9, yb_ - 4.2, zf1 + dz)) for dx, dz in ((-1, 0.0), (1, 0.0), (1, 0.9), (-1, 0.9))],
-                 [Vector((bx + dx * 2.4, yb_ - 0.5, zf1 + dz)) for dx, dz in ((-1, 0.0), (1, 0.0), (1, 2.3), (-1, 2.3))]], 'wall')     # pale stepped corbel under the landing
+        B.shell([[Vector((bx + dx * 1.9, yb_ - 4.2, zf1 - 0.25 + dz)) for dx, dz in ((-1, 0.0), (1, 0.0), (1, 1.15), (-1, 1.15))],
+                 [Vector((bx + dx * 2.4, yb_ - 0.5, zf1 - 0.25 + dz)) for dx, dz in ((-1, 0.0), (1, 0.0), (1, 2.55), (-1, 2.55))]], 'wall')     # pale stepped corbel under the landing
         B.box((bx, yb_ - 0.55, zf1 + 1.15), (4.7, 0.35, 2.4), 'wallDark')
     # ── crown: a dark podium (tier 3) carrying a dominant pale needle spire and a flat-topped dark block with the second coral slab, off-axis, unequal heights ──
     y3 = t3.y1; wt3 = t3.hw * 2 * t3.sc(y3); dt3 = t3.hd * 2 * t3.sc(y3)
     band(B, t3, y3 - 1.3, y3 + 0.3, 0.55, 'wallDark')
-    ax_, az_ = -mir * 0.27 * wt3, -0.12 * dt3                               # needle spire (pale)
-    bx_, bz_ = mir * 0.25 * wt3, 0.10 * dt3                                 # flat-topped block (slate) with the coral crown slab
-    yA = 0.86 * H; yC = 0.915 * H
-    TA = Tier(0.40 * wt3, 0.42 * dt3, 0.9, y3 - 0.3, yA, 0.40, ax_, az_)
+    ax_, az_ = -mir * 0.20 * wt3, -0.10 * dt3                               # needle spire (pale), near-constant width, bullet nose
+    bx_, bz_ = mir * 0.27 * wt3, 0.10 * dt3                                 # flat-topped slate block with the coral crown slab
+    yA = 0.88 * H; yC = 0.93 * H
+    TA = Tier(0.44 * wt3, 0.46 * dt3, 1.2, y3 - 0.3, yA, 0.30, ax_, az_)
     wA = TA.hw * 2 * TA.sc(yA); dA = TA.hd * 2 * TA.sc(yA)
-    TC = Tier(wA, dA, 0.35, yA - 0.4, yC, 0.15, ax_, az_)
+    TC = Tier(wA, dA, 0.7, yA - 0.4, yC, 0.12, ax_, az_)
     fA = {}
     slits(fA, '+z', 0.0, 1, 1.0, 0.9, TA.y0 + 4.0, TA.y1 - 3.0); slits(fA, '-z', 0.0, 1, 1.0, 0.9, TA.y0 + 4.0, TA.y1 - 3.0)
     tier_shell(B, TA, fA, 'wallLight', lod); tier_shell(B, TC, {}, 'wallLight', lod)
     yB = 0.84 * H
-    TB = Tier(0.44 * wt3, 0.44 * dt3, 0.8, y3 - 0.3, yB, 0.88, bx_, bz_)
+    TB = Tier(0.42 * wt3, 0.44 * dt3, 0.5, y3 - 0.3, yB, 0.88, bx_, bz_)
     fB = {}
-    slab(fB, '+z', 0.0, 2.2, TB.y0 + 4.0, TB.y1 - 3.0, 1, chan=(TB.y0, TB.y1), chan_m=0.9)
+    pw_b = min(2.4, 2 * (TB.hw - TB.c - 0.6 - 0.3))                         # the tier_shell clamp keeps features 0.6 m inside the face: size the plate to fit
+    slab(fB, '+z', 0.0, pw_b, TB.y0 + 4.0, TB.y1 - 3.0, 1, chan=(TB.y0, TB.y1), chan_m=0.3)
     slits(fB, '+x', 0.0, 1, 1.0, 0.9, TB.y0 + 3.0, TB.y1 - 2.5); slits(fB, '-x', 0.0, 1, 1.0, 0.9, TB.y0 + 3.0, TB.y1 - 2.5)
     tier_shell(B, TB, fB, 'metal', lod)
     B.box((bx_, yB + 0.3, bz_), (TB.hw * 2 * TB.sc(yB) + 0.8, 0.8, TB.hd * 2 * TB.sc(yB) + 0.8), 'wallDark')
+    TD = Tier(0.26 * wt3, 0.22 * dt3, 0.6, y3 - 0.3, 0.77 * H, 0.55, mir * 0.12 * wt3, -0.37 * dt3)    # third, lower pale monolith at the back
+    tier_shell(B, TD, {}, 'wallLight', lod)
     if lod < 2:
         for k_, hh_ in ((-1, 7.0), (1, 4.5)): F.cyl((bx_ + k_ * 1.3, yB + 0.7 + hh_ / 2, bz_), 0.11, hh_, 'metal', seg=6, r2=0.04)
     F.cyl((ax_, (yC + H) / 2, az_), 0.20, H - yC + 0.4, 'metal', seg=8, r2=0.06)
-    F.box((ax_, yC + (H - yC) * 0.55, az_), (3.6, 0.18, 0.18), 'trim')
     B.cyl((ax_, H + 0.1, az_), 0.34, 0.9, 'accent', seg=10)
 
     # ── fallen slabs resting behind the tower: big, tilted, broken-crowned (asymmetry; reads like concept panel 06) ──
@@ -634,21 +638,23 @@ def build_tower(T, lod):
     low = gy < 12.0
     top1 = 3.4 if low else 4.0; top2 = top1 + (2.4 if low else 3.4)
     rr = random.Random(T['seed'] * 7 + 3)
-    rock_n = {0: 22, 1: 16, 2: 10}[lod]; rk_bands = (0.0, 0.30, 0.48, 0.74, 1.0) if lod < 2 else (0.0, 1.0); rk_mats = ('rockMauve', 'rockRed', 'rockMauve', 'rockBlue') if lod < 2 else ('rockMauve',)
-    masses = [(0.0, -(pd_ - 1.4), 1.86 * pw_, 0.6 * pd_, 0.0, 1.2)]
-    for sx in (-1, 1): masses.append((sx * (pw_ - 2.1), -0.18 * pd_, 0.55 * pw_, 1.0 * pd_, -sx * 1.5, 0.0))
-    for mi, (mx, mz, mw, md, ix, iz) in enumerate(masses):
-        t1_ = rock_mass(F, mx, mz, mw, md, -3.2, top1, 40 + mi, n=rock_n, bands=rk_bands, mats=rk_mats)
-        cols.append([round(mx - mw / 2, 2), -3.2, round(mz - md / 2, 2), round(mx + mw / 2, 2), top1 + 0.3, round(mz + md / 2, 2)])
+    rock_n = {0: 22, 1: 16, 2: 10}[lod]; rk_bands = (0.0, 0.62, 0.74, 0.88, 1.0) if lod < 2 else (0.0, 1.0); rk_mats = ('rockMauve', 'rockRed', 'rockMauve', 'rockBlue') if lod < 2 else ('rockMauve',)
+    masses = [(0.0, -(pd_ - 1.4), 1.86 * pw_, 0.6 * pd_, 0.1 * 1.86 * pw_, 1.4, 1.0)]
+    for sx in (-1, 1): masses.append((sx * (pw_ - 2.6), -0.18 * pd_, 0.5 * pw_, 1.0 * pd_, -sx * 0.2 * 0.5 * pw_, 0.22 * pd_, 1.0))
+    masses.append((-0.62 * pw_, pd_ - 3.0, 0.42 * pw_, 0.40 * pd_, 0.9, -0.8, 0.8))      # front outcrop beside the portal (dock side and the street lane stay clear)
+    for mi, (mx, mz, mw, md, ix, iz, hf) in enumerate(masses):
+        tp1 = top1 * hf; tp2 = top2 * hf
+        rock_mass(F, mx, mz, mw, md, -3.2, tp1, 40 + mi, n=rock_n, bands=rk_bands, mats=rk_mats)
+        cols.append([round(mx - 0.425 * mw, 2), -3.2, round(mz - 0.425 * md, 2), round(mx + 0.425 * mw, 2), round(tp1 + 0.3, 2), round(mz + 0.425 * md, 2)])
         if lod < 2:
-            t2_ = rock_mass(F, mx + ix, mz + iz, mw * 0.82, md * 0.76, top1 - 0.3, top2, 50 + mi, n=rock_n, bands=(0.0, 0.5, 1.0), mats=('rockBlue', 'rockMauve'), taper=0.9)
-            cols.append([round(mx + ix - mw * 0.41, 2), top1 - 0.3, round(mz + iz - md * 0.38, 2), round(mx + ix + mw * 0.41, 2), top2 + 0.3, round(mz + iz + md * 0.38, 2)])
-            snow_pad(S, mx + ix, top2 + 0.05, mz + iz, mw * 0.8, md * 0.72, 1.3 + 0.4 * rr.random(), 70 + mi, n=8 if lod == 0 else 4, bury=0.35)
-            snow_pad(S, mx, top1 + 0.05, mz, mw * 0.98, md * 0.98, 0.9, 80 + mi, n=8 if lod == 0 else 4, bury=0.35, p=3.2)      # snow lies on the lower terrace too
+            rock_mass(F, mx + ix, mz + iz, mw * 0.82, md * 0.76, tp1 - 0.3, tp2, 50 + mi, n=rock_n, bands=(0.0, 0.5, 1.0), mats=('rockBlue', 'rockMauve'), taper=0.9)
+            cols.append([round(mx + ix - 0.35 * mw, 2), round(tp1 - 0.3, 2), round(mz + iz - 0.32 * md, 2), round(mx + ix + 0.35 * mw, 2), round(tp2 + 0.3, 2), round(mz + iz + 0.32 * md, 2)])
+            snow_pad(S, mx + ix, tp2 + 0.25, mz + iz, mw * 0.80, md * 0.74, 1.2 + 0.4 * rr.random(), 70 + mi, n=12 if lod == 0 else 5, bury=0.0)
+            snow_pad(S, mx, tp1 + 0.25, mz, mw * 0.84, md * 0.84, 0.8, 80 + mi, n=12 if lod == 0 else 5, bury=0.0, p=3.0)      # snow lies on the lower terrace too
     if lod < 2:
         for i, (a_, rd_) in enumerate(((200, 1.5), (233, 1.0), (265, 1.3), (300, 0.9), (330, 1.4), (20, 1.1), (160, 1.2), (125, 0.8))[:8 if lod == 0 else 4]):
             a = math.radians(a_); bx2, bz2 = sq_pt(pw_ + 5.2 + rr.random(), pd_ + 5.2 + rr.random(), 5.0, a)
-            tb = boulder(F, (bx2, 0.2, bz2), rd_, 100 + i, sqz=(1.2, 0.65, 1.0), rot=rr.uniform(0, 3.1), sub=1, mat=('rockMauve', 'rockBlue', 'rockMauve')[i % 3])
+            tb = boulder(F, (bx2, -0.5, bz2), rd_, 100 + i, sqz=(1.2, 0.65, 1.0), rot=rr.uniform(0, 3.1), sub=1, mat=('rockMauve', 'rockBlue', 'rockMauve')[i % 3])
             snow_pad(S, bx2, tb - 0.4, bz2, rd_ * 1.7, rd_ * 1.5, 0.6, 120 + i, n=3)
         for sx in (-1, 1):                                                                                # fat soft snow lumps at the front corners (street side stays rock-free)
             snow_pad(S, sx * (pw_ + 0.4), 0.9, pd_ + 0.2, 6.0, 5.0, 1.6, 60 + sx, n=7 if lod == 0 else 4, bury=1.0)
