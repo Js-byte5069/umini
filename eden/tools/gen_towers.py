@@ -17,8 +17,10 @@ MI = {m: i for i, m in enumerate(MATS)}
 
 # id, world x/z, yaw (local +z faces the street), overall height, base width/depth, style
 TOWERS = [
-    dict(id=20, x=-88, z=132, yaw=90, H=100, W=31, D=27, seed=3, gallery_y=0.0, slab='front'),
-    dict(id=21, x=90, z=100, yaw=-90, H=82, W=26, D=24, seed=8, gallery_y=0.30, slab='front'),
+    dict(id=20, x=-88, z=119.8, yaw=90, H=100, W=31, D=27, seed=3, gallery_y=0.0, slab='front',
+         bridge=dict(local_x=7.8, deck=19.5, wz=112.0, dir=1, end_x=-50.7)),
+    dict(id=21, x=90, z=104.2, yaw=-90, H=82, W=26, D=24, seed=8, gallery_y=0.30, slab='front',
+         bridge=dict(local_x=7.8, deck=19.5, wz=112.0, dir=-1, end_x=50.7)),
 ]
 
 
@@ -214,6 +216,18 @@ def build_tower(T, lod):
     if lod < 2:                                                      # slim flank slabs on the mid tier
         for sx in (-1, 1):
             B.box((sx * (w2 / 2 + 0.2), (y1b + y2b) / 2, 0), (0.7, (y2b - y1b) * 0.78, d2 * 0.30), 'accent')
+    # ── bridge portal: framed opening + landing stub where the truss bridge docks (tier 1, front face) ──
+    br = T.get('bridge')
+    if br:
+        bx, yb, zf = br['local_x'], br['deck'], d1 / 2
+        B.box((bx, yb + 2.9, zf + 0.1), (5.4, 5.8, 0.9), 'wallLight')
+        B.box((bx, yb + 6.0, zf + 0.25), (6.0, 0.55, 1.2), 'trim')
+        B.box((bx, yb + 2.5, zf + 0.55), (4.0, 4.6, 0.5), 'wallDark')
+        B.box((bx, yb + 2.5, zf + 0.84), (3.3, 3.9, 0.12), 'glass')
+        B.box((bx, yb - 0.27, zf + 1.3), (4.7, 0.5, 2.6), 'wallDark')
+        B.box((bx, yb - 0.02, zf + 1.3), (4.3, 0.1, 2.4), 'deck')
+        for sx in (-1, 1): B.box((bx + sx * 2.45, yb + 0.6, zf + 1.3), (0.28, 1.2, 2.6), 'trim')           # low cheek walls of the stub
+        for sx in (-1, 1): B.box((bx + sx * 2.1, yb - 2.3, zf + 0.4), (0.5, 3.6, 0.7), 'wallDark')         # corbels carrying the stub
     # ── crown: stepped lantern + tapering spire with antenna mast ──
     tier(B, w4 * 0.82, d4 * 0.82, 0.9, y4b - 0.2, y4b + (tip - y4b) * 0.22, 'wallLight', taper=0.8)
     sp0 = y4b + (tip - y4b) * 0.2
@@ -317,7 +331,8 @@ def main():
             if lod == 0:
                 W, D = T['W'], T['D']
                 specs.append(dict(id=T['id'], x=T['x'], z=T['z'], yaw=T['yaw'], door=None, roof=[], seed=T['seed'], canopy=False, tower=True,
-                                  tiers=[dict(w=W + 3.2, d=D + 3.2, h=T['H'])], cols=[[round(c, 2) for c in b] for b in cols]))
+                                  tiers=[dict(w=W + 3.2, d=D + 3.2, h=T['H'])], cols=[[round(c, 2) for c in b] for b in cols],
+                                  **({'bridge': dict(deck=T['bridge']['deck'], dir=T['bridge']['dir'], wz=T['bridge']['wz'], end_x=T['bridge']['end_x'], stub_end=round(0.78 * D / 2 + 2.6, 2))} if T.get('bridge') else {})))
     out = os.path.join(ASSETS, 'towers.glb')
     bpy.ops.export_scene.gltf(filepath=out, export_format='GLB', export_vertex_color='ACTIVE', export_yup=False, export_materials='NONE', export_apply=False)
     json.dump({'buildings': specs}, open(os.path.join(ASSETS, 'towers.json'), 'w'), indent=1)

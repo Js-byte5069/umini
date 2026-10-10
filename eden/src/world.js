@@ -1,6 +1,6 @@
 // Level layout: spawn → entrance snowfield (viaduct gateway) → abandoned city → snow canyon (ring) → factory gate.
 import * as THREE from 'three';
-import { makeStructure, frame, M } from './kit.js';
+import { makeStructure, frame, M, rbox } from './kit.js';
 import { building, buildingAsset } from './arch_building.js';
 import { ASSETS } from './assets.js';
 import { viaduct, catwalk, stairs, ringGate, spireCluster } from './arch_infra.js';
@@ -37,6 +37,25 @@ export async function buildWorld(scene, onProgress = () => {}) {
   // street buildings: specs shared with the Blender generator (tools/buildings.json)
   const specs = ASSETS.buildingSpecs ?? FALLBACK_SPECS;
   for (const sp of specs) bld(sp.x, sp.z, sp, { yaw: ((sp.yaw ?? 0) * Math.PI) / 180 });
+
+  // ── truss bridges from the hero towers to their neighbouring buildings (spec.bridge from tools/gen_towers.py) ──
+  for (const sp of specs) {
+    if (!sp.bridge) continue;
+    job(() => {
+      const br = sp.bridge, dir = br.dir;
+      const yd = ground(sp.x, sp.z) - 0.9 + br.deck;
+      const xa = sp.x + dir * br.stub_end, xb = br.end_x;
+      put(makeStructure((lod, B, col) => {
+        catwalk(B, lod, col, { x0: Math.min(xa, xb), x1: Math.max(xa, xb), y: yd, z: 0, width: 4.6 });
+        // doorway on the neighbouring building's wall: pale frame + lintel + dark door with a lit pane (same language as the tower portal)
+        const wx = xb - dir * 0.3;
+        B.add('wallLight', rbox(0.9, 5.8, 5.4, 0.12, 2), M(wx, yd + 2.9, 0));
+        B.add('trim', rbox(1.2, 0.55, 6.0, 0.1, 2), M(wx, yd + 6.0, 0));
+        B.add('wallDark', rbox(0.5, 4.6, 4.0, 0.1, 2), M(wx - dir * 0.3, yd + 2.5, 0));
+        if (lod < 2) B.add('glass', rbox(0.12, 3.9, 3.3, 0.04, 1), M(wx - dir * 0.6, yd + 2.5, 0));
+      }, { x: 0, y: 0, z: br.wz, lods: [0, 140, 300, 600] }));
+    });
+  }
 
   // ── overhead bridge between the two hero buildings + stair up to it ─────────────────────────
   job(() => {

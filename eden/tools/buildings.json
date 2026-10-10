@@ -22,18 +22,8 @@
      "accent": [
       {
        "face": "x+",
-       "x": -9.5,
-       "w": 5.4
-      },
-      {
-       "face": "x+",
        "x": 9.5,
-       "w": 5.4
-      },
-      {
-       "face": "z+",
-       "x": 7,
-       "w": 5.5
+       "w": 7.0
       }
      ],
      "gallery": [
@@ -55,13 +45,7 @@
      "ch": 2.4,
      "taper": 0.05,
      "windows": 0.15,
-     "accent": [
-      {
-       "face": "x+",
-       "x": 0,
-       "w": 6
-      }
-     ],
+     "accent": [],
      "gallery": [
       {
        "face": "x+",
@@ -84,7 +68,8 @@
      "rings": [
       8
      ],
-     "style": "vertical"
+     "style": "vertical",
+     "accent": []
     }
    ],
    "wings": [
@@ -132,12 +117,7 @@
       {
        "face": "x-",
        "x": -8,
-       "w": 5.2
-      },
-      {
-       "face": "z+",
-       "x": -7,
-       "w": 5
+       "w": 7.0
       }
      ],
      "gallery": [
@@ -160,18 +140,7 @@
      "shape": "chamfer",
      "ch": 2.0,
      "taper": 0.06,
-     "accent": [
-      {
-       "face": "x-",
-       "x": 4,
-       "w": 5.6
-      },
-      {
-       "face": "z+",
-       "x": 0,
-       "w": 5.6
-      }
-     ],
+     "accent": [],
      "style": "slab",
      "skin": "wallDark"
     },
@@ -186,7 +155,8 @@
      "rings": [
       9
      ],
-     "style": "vertical"
+     "style": "vertical",
+     "accent": []
     }
    ],
    "wings": [
@@ -233,13 +203,8 @@
      "accent": [
       {
        "face": "x+",
-       "x": -9,
-       "w": 5.4
-      },
-      {
-       "face": "x+",
        "x": 9,
-       "w": 5.4
+       "w": 7.0
       }
      ],
      "gallery": [
@@ -262,13 +227,7 @@
      "shape": "chamfer",
      "ch": 2.5,
      "taper": 0.05,
-     "accent": [
-      {
-       "face": "x+",
-       "x": 0,
-       "w": 4.6
-      }
-     ]
+     "accent": []
     }
    ],
    "wings": [
@@ -338,18 +297,7 @@
      "shape": "chamfer",
      "ch": 2.4,
      "buttress": 3,
-     "accent": [
-      {
-       "face": "x-",
-       "x": -9,
-       "w": 5.4
-      },
-      {
-       "face": "x-",
-       "x": 9,
-       "w": 5.4
-      }
-     ]
+     "accent": []
     },
     {
      "w": 18,
@@ -362,18 +310,8 @@
      "accent": [
       {
        "face": "x-",
-       "x": -4.5,
-       "w": 5.8
-      },
-      {
-       "face": "x-",
-       "x": 4.5,
-       "w": 5.8
-      },
-      {
-       "face": "z+",
        "x": 0,
-       "w": 6
+       "w": 7.0
       }
      ],
      "style": "slab",
@@ -389,7 +327,8 @@
      "rings": [
       7
      ],
-     "style": "vertical"
+     "style": "vertical",
+     "accent": []
     }
    ],
    "wings": []
@@ -414,13 +353,8 @@
      "accent": [
       {
        "face": "x+",
-       "x": -9.5,
-       "w": 4.6
-      },
-      {
-       "face": "x+",
        "x": 9.5,
-       "w": 4.6
+       "w": 7.0
       }
      ],
      "arcade": true
@@ -432,7 +366,8 @@
      "ox": -3,
      "shape": "chamfer",
      "ch": 2.2,
-     "taper": 0.05
+     "taper": 0.05,
+     "accent": []
     }
    ],
    "wings": [
@@ -509,12 +444,7 @@
       {
        "face": "x-",
        "x": -9,
-       "w": 5
-      },
-      {
-       "face": "z+",
-       "x": 6,
-       "w": 4
+       "w": 7.0
       }
      ],
      "style": "industrial",
@@ -527,7 +457,8 @@
      "ox": 3,
      "shape": "chamfer",
      "ch": 2.0,
-     "taper": 0.05
+     "taper": 0.05,
+     "accent": []
     }
    ],
    "wings": [
@@ -591,13 +522,8 @@
      "accent": [
       {
        "face": "x-",
-       "x": -8,
-       "w": 5
-      },
-      {
-       "face": "x-",
        "x": 8,
-       "w": 5
+       "w": 7.0
       }
      ],
      "gallery": [
@@ -625,7 +551,8 @@
        "len": 12
       }
      ],
-     "style": "slab"
+     "style": "slab",
+     "accent": []
     },
     {
      "w": 20,
@@ -635,13 +562,7 @@
      "shape": "chamfer",
      "ch": 2.0,
      "taper": 0.03,
-     "accent": [
-      {
-       "face": "x-",
-       "x": 0,
-       "w": 5.4
-      }
-     ],
+     "accent": [],
      "style": "vertical"
     },
     {
@@ -651,7 +572,8 @@
      "ox": 6,
      "shape": "oct",
      "taper": 0.04,
-     "skin": "wallDark"
+     "skin": "wallDark",
+     "accent": []
     },
     {
      "w": 8,
@@ -659,7 +581,8 @@
      "h": 15,
      "ox": 8,
      "shape": "round",
-     "taper": 0.1
+     "taper": 0.1,
+     "accent": []
     }
    ],
    "wings": [

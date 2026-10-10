@@ -467,28 +467,15 @@ def relief_rect(S, u0, v0, u1, v1, mat, depth, lod, bay=None, lip=0.14, base=-0.
 
 
 def fin_blocks(S, u, w, v0, v1, lod, rnd, depth=0.62, seg_h=8.0, gap=0.24, mat='accent', mat2='accentDark', inner=True, soft=False):
-    """tall orange fin: one or two columns of stepped modules (3.4-5 m tall, seams every module, staggered between the columns),
-    each with a chamfered lip and - on bigger modules - a real recessed bay with a darker floor; bolt pairs on the seams."""
-    ncol = 2 if (w >= 5.0 and lod == 0) else 1
-    cg = 0.28
-    cw = (w - cg * (ncol - 1)) / ncol
-    for ci in range(ncol):
-        uc = u - w / 2 + cw / 2 + ci * (cw + cg)
-        y = v0
-        first = True
-        while y < v1 - 1.0:
-            mh = rnd.uniform(3.6, 5.0) * (1.6 if lod >= 1 else 1.0)
-            if first and ci == 1: mh *= rnd.uniform(0.45, 0.75)       # stagger the seams between the columns
-            first = False
-            top = min(v1, y + mh)
-            if v1 - top < 1.6: top = v1
-            a, b = y + gap / 2, top - gap / 2
-            m = mat2 if rnd.random() < 0.16 else mat
-            d = depth * rnd.choice((0.8, 1.0, 1.15))
-            bay = lod == 0 and (b - a) > 3.0 and cw > 3.1 and rnd.random() < 0.6
-            relief_rect(S, uc - cw / 2, a, uc + cw / 2, b, m, d + 0.06, lod, bay=bay, lip=0.16 if lod == 0 else 0.1, floor_mat=(mat if m == mat2 else mat2), bay_inset=min(0.75, cw * 0.2),
-                        inner=(mat if m == mat2 else mat2) if rnd.random() < 0.7 else m)
-            y = top
+    """ONE big coral slab (reference sheet): a dark frame set behind it, a single tall chamfered slab with a real recessed bay and a darker inner plate.
+    A face taller than ~30 m carries two stacked slabs with a visible seam instead of one endless plate."""
+    a, b = v0 + 0.25, v1 - 0.25
+    relief_rect(S, u - w / 2 - 0.55, a - 0.45, u + w / 2 + 0.55, b + 0.45, 'wallDark', 0.3, lod, lip=0.1)
+    n = 1 if (b - a) <= 30.0 else 2
+    h = (b - a - 0.4 * (n - 1)) / n
+    for k in range(n):
+        sa = a + k * (h + 0.4)
+        relief_rect(S, u - w / 2, sa, u + w / 2, sa + h, mat, 0.98, lod, bay=False, lip=0.24 if lod == 0 else 0.12, inner=mat2)      # solid slab + a raised darker inner plate
 
 
 def gallery_local(S, u0, u1, v, depth, lod, snow_seed=1, rail=True):
@@ -662,7 +649,7 @@ def plan_face(W, H, t, rnd, detail, lod, vmin=0.0, door_u=None, narrow=False, fi
                 elif kind == 'plain' and lod == 0 and detail >= 0.78:
                     feats.append(dict(u0=pu0 + 0.5, u1=pu1 - 0.5, v0=pv0 + 0.5, v1=pv1 - 0.5, prof=[(0, 0), (0.07, -0.05), (0.07, -0.13)] if rich else [(0, 0), (0, -0.12)], mats=['wallLight', 'wall'] if rich else ['wall'], floor='wall', kind='plain'))
                 elif kind == 'inset':
-                    feats.append(F_panel(pu0 + 0.3, pv0, pu1 - 0.3, pv1, rich, big, floor='accent' if rnd.random() < 0.7 else 'accentDark'))
+                    feats.append(F_panel(pu0 + 0.3, pv0, pu1 - 0.3, pv1, rich, big, floor='wallDark' if rnd.random() < 0.7 else 'wall'))      # coral lives only on the one big slab
                 elif kind == 'louver':
                     feats.append(F_louver(pu0 + 0.2, pv0 + 0.4, pu1 - 0.2, pv1 - 0.6, rich))
                 elif kind == 'slit':

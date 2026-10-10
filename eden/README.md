@@ -20,8 +20,8 @@ URL 参数(`?sparse=2.0` 地面残骸间距倍数,越大越空;渲染调试:`?no
 
 ## Blender 资产管线(`tools/`)
 需要 `pip install bpy==4.2.0`,无头运行,确定性输出到 `assets/`。资产缺失时游戏自动回退到代码生成版本。
-- `gen_buildings.py [id]` → `buildings.glb`(约 6MB,15 栋、3 级 LOD)。由 `tools/buildings.json` 驱动(同时生成 `assets/buildings.json` 与 `src/fallback_specs.js`),该规格也决定游戏里的摆放、碰撞与屋顶积雪。嵌板/竖缝窗是网格里真实的凹陷,倒角圆边,烘焙 AO。
-- `gen_towers.py` → `towers.glb` + `towers.json`(约 2.5MB):按参考图做的"前文明哨塔"主角建筑——深色基础块与角扶壁、挑出的环形观测廊(带栏杆与托架)、浅灰白分层收分塔身、一整列珊瑚红大板配深色壁柱、塔冠与天线、每层台阶上的圆润积雪。2 座(id 20/21),命名与 `buildings.glb` 相同,经同一条加载路径摆放(`towers.json` 含位置、朝向与碰撞盒)。
+- `gen_buildings.py [id]`(每栋街区建筑只有**一整块**珊瑚红大板 + 深色衬框,由 `buildings.json` 的 `accent` 控制;立面嵌板底面一律为深石板色,不再散落小块珊瑚红) → `buildings.glb`(约 6MB,15 栋、3 级 LOD)。由 `tools/buildings.json` 驱动(同时生成 `assets/buildings.json` 与 `src/fallback_specs.js`),该规格也决定游戏里的摆放、碰撞与屋顶积雪。嵌板/竖缝窗是网格里真实的凹陷,倒角圆边,烘焙 AO。
+- `gen_towers.py` → `towers.glb` + `towers.json`(约 2.5MB):按参考图做的"前文明哨塔"主角建筑——深色基础块与角扶壁、挑出的环形观测廊(带栏杆与托架)、浅灰白分层收分塔身、一整列珊瑚红大板配深色壁柱、塔冠与天线、每层台阶上的圆润积雪。2 座(id 20/21),每座带一座通向相邻建筑门洞的桁架桥(`towers.json` 的 `bridge` 字段,桥面离地约 20m,为造型连接,不可达),命名与 `buildings.glb` 相同,经同一条加载路径摆放(`towers.json` 含位置、朝向与碰撞盒)。
 - `gen_props.py` → `props.glb`(约 4MB):8 种针塔、8 种倒塌巨板(灰/橙)、集装箱、格构支柱。
 - `gen_rocks.py` → `rocks.glb`(约 2.5MB):37 种雕刻岩石(11 种大型主体 + 23 种小岩石:圆石、碎块、倾斜楔形、板岩、多块堆叠)加 12 种碎石,烘焙 AO 与边缘提亮,独立的积雪帽网格,4 级 LOD。由 `src/scatter.js` 成簇摆放(主体+卫星+碎石扇+雪堤)。运行:`PYTHONDONTWRITEBYTECODE=1 python3 tools/gen_rocks.py`(环境变量 `ROCKS_OUT`、`ROCKS_ONLY`)。
 - `gen_debris.py` → `debris.glb`(约 3.2MB):25 类残骸/废墟道具(断墙、拱段、倒塌柱鼓、桁架、管道、罐体、齿轮/叶轮、履带残骸、板条箱、路障、碎石扇等,约 56 变体,3 级 LOD),由 `src/dressing.js` 成组摆放。调试参数:`?nodress`、`?fallbackdress`。
