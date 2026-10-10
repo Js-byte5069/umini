@@ -17,6 +17,7 @@ export const PAL = {
   rockBlue: 0x7a7fa6,
   rockRed: 0xe07468,
   rockRedDark: 0xb05560,
+  rockMauve: 0x9a7388,       // muted violet-brown strata of the tower plinths (reference sheet), between the slate-blue and coral rocks
   skyTop: 0x2f6fe4,
   skyMid: 0x5a98f4,
   skyHorizon: 0xaec9f8,
@@ -282,6 +283,7 @@ export const MAT = {
   glow: toon(0xf08a78, { emissive: 0xd85c56, emissiveIntensity: 0.9, paint: false }),
   rockBlue: toon(PAL.rockBlue, { snow: 1, strata: 1, snowTh: 0.83, ramp: RAMP_ROCK, fam: ROCKBLUE }),
   rockRed: toon(PAL.rockRed, { snow: 1, strata: 1, snowTh: 0.83, ramp: RAMP_ROCK, bounce: [0.10, 0.05, 0.05], fam: ROCKRED }),
+  rockMauve: toon(PAL.rockMauve, { snow: 1, strata: 1, snowTh: 0.83, ramp: RAMP_ROCK, bounce: [0.08, 0.05, 0.07], fam: ROCKRED }),
   // near-LOD rocks carry real snow-cap meshes: no painted snow on top of them (its normal-based contour would show polygon edges)
   rockBlueN: toon(PAL.rockBlue, { snow: 0, strata: 1, ramp: RAMP_ROCK, fam: ROCKBLUE }),
   rockRedN: toon(PAL.rockRed, { snow: 0, strata: 1, ramp: RAMP_ROCK, bounce: [0.10, 0.05, 0.05], fam: ROCKRED }),

@@ -26,6 +26,7 @@ const KEY_STYLE = {
   accentDark: { g: 0.060, v: 0.055, h: [0.040, 0.100, -0.080], edge: [1.10, 1.22, 1.16] },
   rockBlue:   { g: 0.040, v: 0.050, h: [0.020, 0.000, -0.030], edge: [1.08, 1.09, 1.12] },
   rockRed:    { g: 0.040, v: 0.050, h: [0.040, 0.090, -0.070], edge: [1.07, 1.14, 1.10] },
+  rockMauve:  { g: 0.040, v: 0.050, h: [0.040, 0.060, -0.050], edge: [1.07, 1.11, 1.10] },
 };
 const SUNV = new THREE.Vector3(-0.78, 0.55, 0.1).normalize();
 const hash1 = (x, y, z, s) => { const h = Math.sin(x * 12.9898 + y * 78.233 + z * 37.719 + s * 4.1414) * 43758.5453; return h - Math.floor(h); };
