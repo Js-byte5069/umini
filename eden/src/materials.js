@@ -6,10 +6,10 @@ import './atmosphere.js';
 export const PAL = {
   snow: 0xf8f7fb,
   snowShade: 0xaab6e8,
-  wall: 0x72779c,
-  wallLight: 0x9a9fbe,
+  wall: 0xaab0cc,          // main material: light cool grey (reference tower sheet), lit faces go almost white, shade lavender-blue
+  wallLight: 0xc6cbe0,
   wallDark: 0x464b6e,
-  trim: 0xa0a5c3,
+  trim: 0xbcc1d8,
   metal: 0x444968,
   glass: 0x1c2347,
   accent: 0xf28378,          // coral red-orange (concept swatches #e1706d / #c85b5a), no hot orange

@@ -555,6 +555,7 @@ export function dressingWorld(ctx) {
   const lateral = (z, side, d) => routeX(z) * 0.5 + side * d;       // lateral position from the lane centre (blend of the two route lines)
 
   // ── placement plans, section by section ──────────────────────────────────────────────────────────────────────
+  const SPARSE = parseFloat(new URLSearchParams(location.search).get('sparse') ?? '2.0');      // lane dressing spacing multiplier: open snow reads calmer (concept: big white fields, a few focal pieces)
   const section = (z0, z1, stepA, stepB, fn) => { for (let z = z0; z > z1; z -= stepA + r() * (stepB - stepA)) fn(z); };
 
   const galleryItems = () => {
@@ -590,7 +591,7 @@ export function dressingWorld(ctx) {
         if (k < o.nearP) ok = composeCluster(near(cOf, side, z, 4, 7), { pool: MID, sat: 3, scale: o.sNear });
         else if (k < o.nearP + o.midP) ok = composeCluster(near(cOf, side, z, 10, 9), { pool: BIG, sat: 4, mid: true, scale: o.sMid });
         else ok = composeCluster(near(cOf, side, z, 26, 12), { pool: BIG, sat: 3, mid: true, scale: o.sFar });
-        z -= ok ? o.step * (0.8 + 0.5 * r()) : 2.5;
+        z -= ok ? o.step * SPARSE * (0.8 + 0.5 * r()) : 2.5;
       }
     }
   };
@@ -602,13 +603,13 @@ export function dressingWorld(ctx) {
       composeCluster((rad, t) => { const d = lerp(d0, d1, r()), l = side * (lat0 + rad * 0.55 + r() * (lat1 - lat0)); return [ax + fx * d + rx * l, az + fz * d + rz * l]; }, { pool, sat: 3, mid: true, scale: street ? sc * 0.75 : sc, relax: 2.2, anchor: true });
     }
     // low pieces strewn over the slopes right in front of the eye (they follow the ground and sit half buried)
-    for (let k = 0; k < 6; k++) {
+    for (let k = 0; k < 3; k++) {
       const side = k % 2 ? 1 : -1;
       composeCluster(() => { const d = 4 + r() * 12, l = side * (1.9 + r() * 8); return [ax + fx * d + rx * l, az + fz * d + rz * l]; }, { pool: LOW, sat: 2, relax: 7, anchor: true, scale: 1.1 });
     }
     // the near ring (3.5 - 8 m ahead): the first snow the eye meets in the lower frame gets a few low pieces of its own
-    for (let k = 0; k < 16; k++) {
-      const side = k % 2 ? 1 : -1, low = k >= 10;
+    for (let k = 0; k < 8; k++) {
+      const side = k % 2 ? 1 : -1, low = k >= 5;
       const [n, v] = pick(r, low ? LOW : FLAT);
       for (let t = 0; t < 12; t++) {
         const d = 2.2 + r() * 6.4, l = side * (1.2 + r() * 6.5);
@@ -617,7 +618,7 @@ export function dressingWorld(ctx) {
       }
     }
     // ultra-low strewn pieces right in the lane ahead of the eye (stepped over, never blocking)
-    for (let k = 0; k < 11; k++) {
+    for (let k = 0; k < 5; k++) {
       const side = k % 2 ? 1 : -1;
       const [n, v] = pick(r, FLAT);
       for (let t = 0; t < 8; t++) {
@@ -629,7 +630,7 @@ export function dressingWorld(ctx) {
   }
   walkRoute(250, 178, cField, { nearP: 0.45, midP: 0.4, sNear: 1, sMid: 1, sFar: 1.1, step: 6 });
   // viaduct approach (just outside the pier line) and the arches' feet
-  for (const z of [188, 192, 157, 153]) for (const side of [-1, 1]) composeCluster(near(cField, side, z, 12, 6), { pool: r() < 0.5 ? MID : BIG, sat: 3, mid: true });
+  for (const z of [190, 155]) for (const side of [-1, 1]) composeCluster(near(cField, side, z, 12, 6), { pool: r() < 0.5 ? MID : BIG, sat: 3, mid: true });
   // street plateau flanks: narrow band between the lane and the building lines, so smaller pieces
   walkRoute(142, 30, () => 0, { nearP: 0.5, midP: 0.5, sNear: 0.8, sMid: 0.7, sFar: 0.7, step: 6 });
   // city end -> canyon floor
@@ -637,7 +638,7 @@ export function dressingWorld(ctx) {
   // lane-edge trim: small pieces (rubble, plates, bollards, short walls) strung along both edges of the route, some leaning into the lane
   const edgePass = (z0, z1, cOf, step, dMin, dMax) => {
     for (const side of [-1, 1]) {
-      for (let z = z0 - r() * step; z > z1; z -= step * (0.7 + 0.7 * r())) {
+      for (let z = z0 - r() * step; z > z1; z -= step * SPARSE * (0.7 + 0.7 * r())) {
         for (let t = 0; t < 8; t++) {
           const [n, v] = pick(r, r() < 0.5 ? SMALL : LOW);
           const it = seat(n, v, cOf(z) + side * lerp(dMin, dMax, r()), z + (r() - 0.5) * 3, r() * Math.PI * 2, lerp(SCALE.LOW[0], SCALE.LOW[1], r()), { sink: r() * 0.2 });
@@ -679,7 +680,7 @@ export function dressingWorld(ctx) {
   // with irregular gaps between groups (so the lane reads as lived-in, never as an empty runway nor as an even scatter)
   const flatPass = (z0, z1, cOf, step) => {
     let k = 0;
-    for (let z = z0 - r() * step; z > z1; z -= step * (0.5 + 1.1 * r()), k++) {
+    for (let z = z0 - r() * step; z > z1; z -= step * SPARSE * (0.5 + 1.1 * r()), k++) {
       const side = r() < 0.5 ? -1 : 1;
       for (let t = 0; t < 6; t++) {
         const [n, v] = pick(r, FLAT);
@@ -704,7 +705,7 @@ export function dressingWorld(ctx) {
   flatPass(142, 30, () => 0, 4.4);
   flatPass(30, -186, canyonX, 4.4);
   // 5) low step-over dressing inside / at the edge of the lane
-  const lowAlong = (z0, z1, step, xOf) => { for (let z = z0; z > z1; z -= step * (0.7 + 0.6 * r())) {
+  const lowAlong = (z0, z1, step, xOf) => { for (let z = z0; z > z1; z -= step * SPARSE * (0.7 + 0.6 * r())) {
     const side = r() < 0.5 ? -1 : 1;
     const x = xOf(z) + side * (1.8 + r() * 2.6);
     const [n, v] = pick(r, LOW);

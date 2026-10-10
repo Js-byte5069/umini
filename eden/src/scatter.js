@@ -588,7 +588,7 @@ export function scatterWorld({ job, put, ground, keepClear }) {
   };
   const mkEdge = () => (r() < 0.25 ? { hero: [1.8, 3.2], n: 3 + Math.floor(r() * 3), rubble: 10, spread: 3.5, red: 0.85, drift: 0.55, mound: r() < 0.3, }
                                   : { hero: [0.7, 1.7], n: 2 + Math.floor(r() * 3), rubble: 8 + Math.floor(r() * 8), spread: 3, red: 0.85, drift: 0.55, mound: r() < 0.25 });
-  routeSlots(254, 180, 5.0, () => sx0, 4.4, 7, mkEdge, 3.3);
+  routeSlots(254, 180, 9.0, () => sx0, 4.4, 7, mkEdge, 3.3);
 
   // composed foreground for the key viewpoints: groups in camera-relative slots (forward, lateral, focal size, satellites), jittered if blocked
   const compose = (cx, cz, yawDeg, slots) => {
@@ -621,7 +621,7 @@ export function scatterWorld({ job, put, ground, keepClear }) {
   }
   phase = 'street'; r = rng(hashStr('street'));
   // 4b) street flanks: debris banked against the building lines, leaving the walking lane (|x| < 5.2) clear
-  routeSlots(140, 34, 4.8, () => 0, 5.8, 8, () => ({ hero: r() < 0.2 ? [1.3, 2.4] : [0.5, 1.4], n: 2 + Math.floor(r() * 3), rubble: 8, spread: 2.4, red: 0.55, street: true, drift: 0.5, mound: r() < 0.25,
+  routeSlots(140, 34, 9.5, () => 0, 5.8, 8, () => ({ hero: r() < 0.2 ? [1.3, 2.4] : [0.5, 1.4], n: 2 + Math.floor(r() * 3), rubble: 8, spread: 2.4, red: 0.55, street: true, drift: 0.5, mound: r() < 0.25,
     kinds: { boulder: 3, chunk: 5, slab: 1.5, stack: 2, shard: 1.5 } }), 5.2);
   compose(6, 100, 8, [[6, -4.8, 0.7, 1.2, 3, 8], [8, 5.2, 0.7, 1.1, 3, 8], [15, -7, 1.2, 1.8, 3, 8], [9, -1.0, 0.26, 0.4, 1, 14, 0, 1], [14, 1.0, 0.3, 0.42, 2, 12, 0, 1]]);
   compose(0, 60, 0, [[6, -4.8, 0.7, 1.2, 3, 8], [8, 5.2, 0.7, 1.1, 3, 8], [15, -7, 1.2, 1.8, 3, 8], [9, 0.8, 0.26, 0.4, 1, 14, 0, 1], [14, -1.2, 0.3, 0.42, 2, 12, 0, 1]]);
@@ -657,7 +657,7 @@ export function scatterWorld({ job, put, ground, keepClear }) {
 
   phase = 'dress'; r = rng(hashStr('dress'));
   // 6) canyon route: groups along the floor on both sides of the walking line (lane kept clear), larger toward the walls
-  routeSlots(34, -190, 5.2, (z) => (canyonX(z) + guardX(z)) / 2, 4.4, 8, () => ({ hero: r() < 0.25 ? [1.4, 2.8] : [0.6, 1.5], n: 2 + Math.floor(r() * 3), rubble: 8, spread: 3, red: 0.75, drift: 0.55, mound: r() < 0.2,
+  routeSlots(34, -190, 9.5, (z) => (canyonX(z) + guardX(z)) / 2, 4.4, 8, () => ({ hero: r() < 0.25 ? [1.4, 2.8] : [0.6, 1.5], n: 2 + Math.floor(r() * 3), rubble: 8, spread: 3, red: 0.75, drift: 0.55, mound: r() < 0.2,
     kinds: { boulder: 3, chunk: 5, slab: 1.2, stack: 2, shard: 1.5 } }), 3.0, (z) => Math.abs(canyonX(z) - guardX(z)) / 2);
   compose(-4, -30, 0, [[5.5, -4.6, 0.9, 1.4, 3, 9], [6.5, 5.2, 0.8, 1.2, 3, 8, 1], [14, -8, 1.6, 2.4, 4, 10], [13, 9, 1.4, 2.2, 3, 10], [9, 1.0, 0.26, 0.4, 1, 16, 0, 1], [16, -1.2, 0.3, 0.45, 2, 14, 0, 1]]);
   compose(-4, -60, -10, [[5.5, -4.8, 0.9, 1.4, 3, 9], [7, 5.5, 0.8, 1.2, 3, 8], [14, -8, 1.6, 2.4, 4, 10], [4.2, -6.5, 0.7, 1.0, 2, 8], [4.5, 6.8, 0.7, 1.0, 2, 8], [9, 1.0, 0.26, 0.4, 1, 16, 0, 1]]);

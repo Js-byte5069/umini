@@ -76,6 +76,15 @@ export async function loadAssets() {
     });
     ASSETS.buildings = lib;
     ASSETS.buildingSpecs = specs.buildings;
+    try {   // hero towers (tools/gen_towers.py): same b{id}_l{lod}_{material} naming, loaded into the same library
+      const ts = await (await fetch(url('towers.json'))).json();
+      const tg = await new GLTFLoader().loadAsync(url('towers.glb'));
+      tg.scene.traverse((o) => {
+        const m = o.isMesh && /^b(\d+)_l(\d)_(\w+)$/.exec(o.name);
+        if (m) ((lib[+m[1]] ??= [{}, {}, {}])[+m[2]])[m[3]] = o.geometry;
+      });
+      ASSETS.buildingSpecs = specs.buildings.concat(ts.buildings.filter((b) => lib[b.id]));
+    } catch (e) { console.warn('tower assets unavailable', e); }
   } catch (e) {
     console.warn('building assets unavailable, using procedural fallback', e);
   }

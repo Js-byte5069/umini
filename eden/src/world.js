@@ -36,7 +36,7 @@ export async function buildWorld(scene, onProgress = () => {}) {
 
   // street buildings: specs shared with the Blender generator (tools/buildings.json)
   const specs = ASSETS.buildingSpecs ?? FALLBACK_SPECS;
-  for (const sp of specs) bld(sp.x, sp.z, sp, {});
+  for (const sp of specs) bld(sp.x, sp.z, sp, { yaw: ((sp.yaw ?? 0) * Math.PI) / 180 });
 
   // ── overhead bridge between the two hero buildings + stair up to it ─────────────────────────
   job(() => {
@@ -137,17 +137,12 @@ export async function buildWorld(scene, onProgress = () => {}) {
     });
   };
   spire(96, 36, 1, 5, 125, 20, 5.5);
-  spire(-112, 140, 2, 4, 105, 16, 5);
   spire(150, 130, 3, 6, 150, 24, 6.5);
   spire(-170, 60, 4, 5, 135, 20, 5.8);
   spire(-250, 150, 5, 4, 120, 14, 5);
   spire(250, 170, 6, 5, 130, 18, 5.5);
   spire(60, -20, 7, 3, 70, 10, 4.6);
   // mid-field needles scattered across the ground plane in front of the viaduct (composition: spires in the whole mid-ground, as in the concept)
-  spire(-46, 206, 40, 4, 62, 9, 4.6, 16);
-  spire(40, 198, 41, 3, 78, 8, 4.6, 16);
-  spire(-24, 188, 42, 3, 46, 7, 4.0, 12);
-  spire(27, 226, 43, 3, 40, 7, 3.8, 12);
   spire(-80, 234, 44, 4, 70, 10, 4.8, 18);
   spire(78, 228, 45, 4, 66, 10, 4.8, 18);
   {
