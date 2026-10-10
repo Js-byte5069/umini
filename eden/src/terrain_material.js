@@ -19,7 +19,7 @@ export function makeTerrainMaterial() {
   const m = new THREE.MeshToonMaterial({ vertexColors: true, gradientMap: RAMP_TERRAIN });
   m.shadowSide = THREE.FrontSide;
   m.onBeforeCompile = (sh) => terrainCompile(m, sh);
-  m.customProgramCacheKey = () => 'terrain-paint3';
+  m.customProgramCacheKey = () => 'terrain-paint4';
   return m;
 }
 const TDBG = (typeof location !== 'undefined' && new URLSearchParams(location.search).get('tdbg')) || '0';
@@ -118,7 +118,8 @@ vec2 trackGroove(vec2 p, float zLo, float zHi, float ph, float off, float w, flo
   float flatN = N0.y;                 // un-exaggerated smooth slope measure (gates footprints / ripples)
   float holT = vTr.z;
   float dBL = vTr.w - vTP.y;          // metres below the lip of the face this pixel belongs to (vertex fallback for tiles without a gradient texture)
-  float slopeN = vTr.x;               // rock mask source: per-pixel smooth slope where the gradient texture exists (vertex-blurred mask otherwise)
+  float slopeN = vTr.x;               // per-pixel smooth slope where the gradient texture exists (vertex-blurred mask otherwise): tints / shading
+  float slopeM = vTr.x;               // rock mask source: the same, but calmed in the mid-range (see below)
   if (uTexOn > 0.5 && camD < 2600.0) {
     vec4 gs = sampleGradSmooth(vTP.xz);
     gr0 = gs.xy;
@@ -126,7 +127,11 @@ vec2 trackGroove(vec2 p, float zLo, float zHi, float ph, float off, float w, flo
     gGr = gr0;
     gSm = 1.0;
     float gl0 = length(gr0);
-    slopeN = smoothstep(0.69, 0.44, 1.0 / sqrt(1.0 + gl0 * gl0));
+    // calm slope: the metre-scale slope decides the rock / snow contour only where it is unambiguous (clearly gentle snow or clearly steep rock);
+    // through the mid-range the smoothed slope (vertex attribute, ~2 m half-width kernel) decides, so the contour is a calm flowing line, not marble veins
+    float slopeP = smoothstep(0.69, 0.44, 1.0 / sqrt(1.0 + gl0 * gl0));
+    slopeN = slopeP;
+    slopeM = mix(vTr.x, slopeP, smoothstep(0.70, 0.97, abs(slopeP - 0.5) * 2.0));
     if (camD < 130.0) {
       holT = gs.w;
       float kEx = 1.0 + 1.15 * (1.0 - smoothstep(0.14, 0.5, gl0)) * (1.0 - smoothstep(60.0, 130.0, camD));
@@ -146,8 +151,8 @@ vec2 trackGroove(vec2 p, float zLo, float zHi, float ph, float off, float w, flo
   float capDepth = (1.3 + 3.5 * smoothstep(0.20, 0.80, capN)) * cs;
   float capK = (1.0 - smoothstep(capDepth - 2.2 * cs, capDepth + 1.8 * cs, dBL)) * smoothstep(-1.5 * cs, 0.3, dBL);
   // boundary wobble only acts where the slope is already near the rock threshold: gentle benches never grow rock blotches
-  float wob = (svn3(vTP * vec3(0.045, 0.03, 0.045)) - 0.5) * 0.24 + (svn3(vTP * vec3(0.12, 0.08, 0.12)) - 0.5) * 0.08;
-  float msk = slopeN + wob * smoothstep(0.10, 0.42, slopeN);
+  float wob = (svn3(vTP * vec3(0.045, 0.03, 0.045)) - 0.5) * 0.12 + (svn3(vTP * vec3(0.12, 0.08, 0.12)) - 0.5) * 0.03;
+  float msk = slopeM + wob * smoothstep(0.10, 0.42, slopeM);
   msk -= capK * 0.95 * smoothstep(0.35, 0.6, slopeN) * (1.0 - smoothstep(0.74, 0.93, slopeN));      // snow drapes the shoulders only: a sheer face stays clean rock (no vertical drip tongues)
   float fm = fwidth(msk) * 1.2 + 0.02;
   float m = smoothstep(0.5 - fm, 0.5 + fm, msk);
@@ -294,7 +299,7 @@ vec2 trackGroove(vec2 p, float zLo, float zHi, float ph, float off, float w, flo
 #if TDBG == 1
   diffuseColor.rgb = vec3(m, capK, clamp(dBL / 30.0, 0.0, 1.0));
 #elif TDBG == 2
-  diffuseColor.rgb = vec3(slopeN, capK, m);
+  diffuseColor.rgb = vec3(slopeM, capK, m);
 #endif
 }`)
     .replace('#include <gradientmap_pars_fragment>', `

@@ -221,7 +221,7 @@ function makeSpec(seed, n, len, H) {
   for (let i = 0; i < T; i++) { p.push(c); c += w[i] * 0.85 + B[i]; }
   const L1 = 34 + 22 * r();
   return {
-    T, n, len, seed, rise, a, sl, w, p, B, fil, fd, k1, ph,
+    T, n, len, seed, H, rise, a, sl, w, p, B, fil, fd, k1, ph,
     L1, A1: Math.min(10, 2.2 + len * 0.08) * (0.7 + 0.5 * r()),            // big planar facets: segment length / amplitude
     L2: L1 * (0.38 + 0.15 * r()), A2: 1.6 + 1.6 * r(),                     // a second, smaller swing so facets never repeat
     L3: 84 + 64 * r(),                                                       // how often the first face's lip rises / sinks along the wall
@@ -264,14 +264,14 @@ const sm01 = (x) => { x = x < 0 ? 0 : x > 1 ? 1 : x; return x * x * (3 - 2 * x);
  *  lip of the face this point belongs to and CF = height fraction of that face (both blended smoothly across tiers) */
 let WANT_LIP = false, CL = 0, CF = 0;
 // per-call scratch: tier foot positions (m), bench widths, rise shares and face widths for the wall being evaluated
-const _P = new Float64Array(4), _B = new Float64Array(4), _R = new Float64Array(4), _W = new Float64Array(4);
+const _P = new Float64Array(4), _B = new Float64Array(4), _R = new Float64Array(4), _W = new Float64Array(4), _A = new Float64Array(4);
 /** height fraction at plan distance s for the tier faces whose plan positions are P (m) */
 function profile(s, sp, P) {
   let f = 0;
   for (let i = 0; i < sp.T; i++) {
     const p = P[i], wf = _W[i], x = (s - p) / wf;
     const t = x <= 0 ? 0 : x >= 1 ? 1 : 0.1 * x + 0.9 * x * x * (3 - 2 * x);               // rounded toe, steep middle, soft shoulder
-    const a = sp.a[i];
+    const a = _A[i];
     f += _R[i] * a * t;
     // snow bench behind the lip: rises gently (and flattens) up to the next tier's foot / the plateau
     f += _R[i] * (1 - a) * sm01((s - (p + wf * 0.85)) / _B[i]);
@@ -307,18 +307,29 @@ function cliff(s, along, wx, wz, sp, circ) {
     // the crown step has a plan line of its own (partly echoing the first face, partly independent) and sits back by a different amount from place to place
     const w1b = facetWave(K1 ? along / circ * K1 + 0.5 : along / (sp.L1 * 0.8) + 0.5, K1, sp.s1 + 101);
     _P[1] = P0 + (sp.p[1] - sp.p[0]) * kS + sp.A1 * (0.30 * sp.k1[1] * w1 + 0.80 * w1b) + sp.A2 * w2 * 0.6 + sc;
-    _B[0] = Math.max(_P[1] - (P0 + 0.85 * _W[0]), 2.5);                        // the lower snow bench runs right up to the crown step's foot
+    // a snow bench between the two faces is either clearly a bench or not there at all, never a thin ribbon: the crown step is kept at least 6 m behind the
+    // first face's shoulder wherever the facet swings would bring it nearer (as far as the plan length allows: the crown step's own bench keeps 4 m)
+    const bLo = P0 + 0.85 * _W[0];
+    _P[1] = Math.max(_P[1], Math.min(bLo + 6, Math.max(sp.len - 7 - 0.85 * _W[1], bLo + 2.5)));
+    _B[0] = Math.max(_P[1] - bLo, 2.5);                                         // the lower snow bench runs right up to the crown step's foot
   }
   // the last bench always tops out at the same plan distance (len - 3) however the facet lines swing: the plateau of a mesa is then dead calm instead of
   // fanning out in radial ripples around its centre (where the along coordinate gets compressed)
   _B[T - 1] = Math.max(sp.len - 3 - (_P[T - 1] + 0.85 * _W[T - 1]), 3);
+  // calm benches: a snow bench may climb at an average slope of 0.5 at most (peak 0.75, well under the shader's rock threshold at ~1.05..1.5), so benches always read
+  // as soft snow and never hover at the snow / rock threshold (that drew meandering snow veins over the face). Whatever rise a narrow bench cannot carry
+  // is handed to the face below it (the total height of the tier is unchanged: only where the climb happens moves)
+  for (let i = 0; i < T; i++) {
+    const rh = _R[i] * sp.H, allow = _B[i] * 0.5;
+    _A[i] = rh * (1 - sp.a[i]) > allow ? 1 - allow / rh : sp.a[i];
+  }
   const f = profile(s, sp, _P);
   if (WANT_LIP) {
     // lip height (as a fraction of H): the first tier's lip, blending smoothly into each next tier's lip across the bench behind the previous one,
     // so it never jumps where the active tier changes (a jump interpolated over one cell would draw saw teeth along the snow cap)
     let Lf = 0, prev = 0, Ff = 0, prevF = 0;
     for (let k = 0; k < T; k++) {
-      const lk = profile(_P[k] + 0.9 * _W[k], sp, _P), fk = _R[k] * sp.a[k];
+      const lk = profile(_P[k] + 0.9 * _W[k], sp, _P), fk = _R[k] * _A[k];
       if (k === 0) { Lf = lk; Ff = fk; }
       else { const wk = sm01((s - (_P[k - 1] + 0.9 * _W[k - 1])) / Math.max(_P[k] - (_P[k - 1] + 0.9 * _W[k - 1]), 3)); Lf += (lk - prev) * wk; Ff += (fk - prevF) * wk; }
       prev = lk; prevF = fk;
@@ -971,7 +982,7 @@ export function snowColorAt(x, z, ny, out) {
   const t2 = 0.5 + 0.5 * N.n2(x * 0.05, z * 0.05);
   return out.copy(cSnowA).lerp(cSnowB, clamp(t * 0.3 + t2 * 0.08 + sstep(0.97, 0.84, ny) * 0.3));
 }
-export const rockMask = (ny) => sstep(0.66, 0.46, ny);
+export const rockMask = (ny) => sstep(0.69, 0.44, ny);          // the same curve as the terrain shader's slopeN (1 / sqrt(1 + g^2) in, 0 = snow .. 1 = rock out)
 
 // ── chunked, LOD'd mesh ─────────────────────────────────────────────────────
 const CHUNK = 64;
@@ -1000,7 +1011,11 @@ function isCliffy(cx, cz) {
 function buildChunk(cx, cz, lod) { return buildGrid(cx * CHUNK, cz * CHUNK, CHUNK, (isCliffy(cx, cz) ? LOD_SEGS_CLIFF : LOD_SEGS)[lod], BLUR[lod], 3.5, true); }
 function buildGrid(x0, z0, size, segs, R, skirt, withTex = false) {
   const step = size / segs;
-  const n = segs + 1, P = 5, pn = n + 2 * P;
+  // the rock mask is smoothed over a couple of metres (two box passes of ~1 m: a triangular kernel, half width ~2 m, about the same in metres at every
+  // fine LOD): mid-steep ground whose metre-scale slope hovers around the rock / snow threshold then gets a calm, flowing contour instead of marble-like
+  // veins (a wider kernel would bias contours toward neighbouring faces and leave little rock islands in snow benches)
+  const Rm = step < 0.95 ? clamp(Math.round(1.1 / step), 1, 3) : 0;           // coarse grids (far LODs, far tiles): their gradient is already smooth at a few metres, so no extra blur
+  const n = segs + 1, P = Math.max(5, 3 + 2 * Rm), pn = n + 2 * P;
   const H = new Float32Array(pn * pn), LCs = new Float32Array(pn * pn), DEP = new Float32Array(pn * pn), FHs = new Float32Array(pn * pn);
   const aux = { w: 0, sp: null, f: 0, H: 0, d: 0, sw: 0, sd: 0, sf: 0, fh: 0 };
   for (let j = 0; j < pn; j++)
@@ -1020,22 +1035,18 @@ function buildGrid(x0, z0, size, segs, R, skirt, withTex = false) {
       GZ[c0] = ((H[c0 + pn] - H[c0 - pn]) / (2 * step) + (H[c0 + 2 * pn] - H[c0 - 2 * pn]) / (4 * step)) * 0.5;
       RM[c0] = rockMask(1 / Math.hypot(GX[c0], 1, GZ[c0]));
     }
-  // wide, separable box blur of the rock mask (~1.4 m radius): the shader thresholds this smooth field, so the snow/rock
-  // contour is a clean flowing line (never per-triangle saw teeth) wherever the wall normals are busy
-  const Rm = clamp(Math.round(1.4 / step), 1, 3);
-  const RT = new Float32Array(pn * pn), RB = new Float32Array(pn * pn);
-  for (let j = 2; j < pn - 2; j++)
-    for (let i = 2 + Rm; i < pn - 2 - Rm; i++) {
-      let a = 0;
-      for (let d = -Rm; d <= Rm; d++) a += RM[j * pn + i + d];
-      RT[j * pn + i] = a / (2 * Rm + 1);
-    }
-  for (let j = 2 + Rm; j < pn - 2 - Rm; j++)
-    for (let i = 2 + Rm; i < pn - 2 - Rm; i++) {
-      let a = 0;
-      for (let d = -Rm; d <= Rm; d++) a += RT[(j + d) * pn + i];
-      RB[j * pn + i] = a / (2 * Rm + 1);
-    }
+  // wide, separable box blurs of the rock mask: the shader thresholds this smooth field wherever the per-pixel slope is ambiguous, so the snow / rock
+  // contour is a clean flowing line (never per-triangle saw teeth, never marble veins) wherever the wall normals are busy
+  const RT = new Float32Array(pn * pn), RA = new Float32Array(pn * pn), RB = new Float32Array(pn * pn);
+  const boxBlur = (src, dst, lo, r) => {       // blurs the interior [lo, pn - 1 - lo]; the result is valid on [lo + r, pn - 1 - lo - r]
+    const hi = pn - 1 - lo, k = 2 * r + 1;
+    for (let j = lo; j <= hi; j++)
+      for (let i = lo + r; i <= hi - r; i++) { let a = 0; for (let d = -r; d <= r; d++) a += src[j * pn + i + d]; RT[j * pn + i] = a / k; }
+    for (let j = lo + r; j <= hi - r; j++)
+      for (let i = lo + r; i <= hi - r; i++) { let a = 0; for (let d = -r; d <= r; d++) a += RT[(j + d) * pn + i]; dst[j * pn + i] = a / k; }
+  };
+  boxBlur(RM, RA, 2, Rm);
+  boxBlur(RA, RB, 2 + Rm, Rm);
   const curvK = clamp(Math.round(2.4 / step), 1, 5), curvS = clamp(Math.round(1.3 / step), 1, 5), curvM = clamp(Math.round(3.6 / step), 1, 5);
 
   const verts = n * n + 4 * n;
