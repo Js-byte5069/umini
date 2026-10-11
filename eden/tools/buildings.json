@@ -17,7 +17,7 @@
      "h": 28,
      "shape": "chamfer",
      "ch": 3.4,
-     "taper": 0.04,
+     "taper": 0.08,
      "buttress": 3,
      "accent": [
       {
@@ -116,7 +116,7 @@
      "h": 24,
      "shape": "chamfer",
      "ch": 3.0,
-     "taper": 0.03,
+     "taper": 0.07,
      "buttress": 2,
      "accent": [
       {
@@ -231,7 +231,8 @@
       }
      ],
      "style": "industrial",
-     "arcade": true
+     "arcade": true,
+     "taper": 0.07
     },
     {
      "w": 16,
@@ -312,7 +313,8 @@
      "shape": "chamfer",
      "ch": 2.4,
      "buttress": 3,
-     "accent": []
+     "accent": [],
+     "taper": 0.07
     },
     {
      "w": 18,
@@ -382,7 +384,8 @@
        "w": 6.6
       }
      ],
-     "arcade": true
+     "arcade": true,
+     "taper": 0.07
     },
     {
      "w": 18,
@@ -478,7 +481,8 @@
       }
      ],
      "style": "industrial",
-     "pipes": 1
+     "pipes": 1,
+     "taper": 0.07
     },
     {
      "w": 18,
@@ -568,7 +572,8 @@
        "y": 7,
        "len": 16
       }
-     ]
+     ],
+     "taper": 0.07
     },
     {
      "w": 26,

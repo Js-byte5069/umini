@@ -1443,6 +1443,25 @@ def build_volume(spec, t, ti, y0, lod, last=False, ground=True, door=False):
             fl.normal_update()
             if fl.normal.y < 0: bmesh.ops.reverse_faces(T.bm, faces=[fl])
         roof_snow(T, P, shape, top, 1.0 if last else 0.85, spec['seed'] + ti * 3, lod)
+    # heavy framing (the concept art's structural language): chunky dark corner pylons with slab-edge collars every ~7 m and a coral inlay.
+    # Big forms only (a handful of boxes per tier); built before the wall batter below, so they lean with the walls. Collars wrap the corners only:
+    # a full ring of beams would cut across the windows.
+    if lod < 2 and t.get('frame', True) and H >= 12 and min(w, d) >= 12 and not round_:
+        step = t.get('frame_step', 7.2)
+        yp0 = y0 - 1.0 if ground else y0 + 0.1; yp1 = top - 0.8
+        for i in range(len(P)):
+            n, L = edge_normal(P, i)
+            if not (0.3 < abs(n[0]) < 0.95 and 0.3 < abs(n[1]) < 0.95): continue          # chamfer / octagon diagonals only
+            a_, b_ = P[i], P[(i + 1) % len(P)]
+            mx, mz = (a_[0] + b_[0]) / 2, (a_[1] + b_[1]) / 2
+            yaw = math.atan2(n[0], n[1]); wpy = min(L + 1.0, 4.2)
+            T.box((mx + n[0] * 0.55, (yp0 + yp1) / 2, mz + n[1] * 0.55), (wpy, yp1 - yp0, 1.7), 'metal', rot=(0, yaw, 0), bev=0.16 if lod == 0 else 0)
+            yb = y0 + step; kb = 0
+            while yb < top - 3.0:
+                T.box((mx + n[0] * 0.95, yb + 0.4, mz + n[1] * 0.95), (wpy + 3.6, 0.8, 2.5), 'wallDark' if (kb + i) % 2 == 0 else 'metal', rot=(0, yaw, 0), bev=0.12 if lod == 0 else 0)
+                yb += step; kb += 1
+            if (i + spec['seed']) % 2 == 0 and lod == 0:
+                T.box((mx + n[0] * 1.46, y0 + H * 0.6, mz + n[1] * 1.46), (wpy * 0.5, H * 0.34, 0.2), 'accent', rot=(0, yaw, 0), bev=0.05)
     tp = t.get('taper', 0.0)
     if tp:
         for v in T.bm.verts:
