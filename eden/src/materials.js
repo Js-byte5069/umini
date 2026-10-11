@@ -6,8 +6,8 @@ import './atmosphere.js';
 export const PAL = {
   snow: 0xf8f7fb,
   snowShade: 0xaab6e8,
-  wall: 0xaab0cc,          // main material: light cool grey (reference tower sheet), lit faces go almost white, shade lavender-blue
-  wallLight: 0xc6cbe0,
+  wall: 0x9ca3c4,          // main material: light cool grey (reference tower sheet), lit faces go almost white, shade lavender-blue
+  wallLight: 0xbbc1da,
   wallDark: 0x464b6e,
   trim: 0xbcc1d8,
   metal: 0x444968,
@@ -128,46 +128,59 @@ const PAINT_GLSL = /* glsl */ `
     float hg = smoothstep(-2.0, 46.0, wp.y);
     baseC *= mix(0.88, 1.08, hg);
     baseC = mix(baseC, baseC * vec3(1.03, 1.0, 0.96), hg * 0.5);
-    // ── hand-painted surface richness (architecture only): brush grain, painted plates, chipped paint, edge light, stains ──
-    if (uDetail.x + uDetail.y + uDetail.z + uDetail.w > 0.0) {
-      float dN = 1.0 - smoothstep(30.0, 110.0, camD);
+    // ── thick-paint look (architecture only): broad, form-following daubs of paint a step lighter / deeper / warmer / cooler, each with a thin
+    //    ridge of impasto light on its edge, per-plate tonal steps with a soft top-light gradient, and a crisp edge-light on creases.
+    //    No grain, no chips, no stains: the planes stay clean, the *paint* shows. ──
+    if (uDetail.x + uDetail.y + uDetail.w > 0.0) {
+      float dN = 1.0 - smoothstep(35.0, 120.0, camD);
       float horiz = smoothstep(0.55, 0.85, abs(vWN.y));
       vec2 tg = normalize(vec2(-vWN.z, vWN.x) + vec2(1e-4, 0.0));
       vec2 pc = mix(vec2(dot(wp.xz, tg), wp.y), wp.xz, horiz);                 // plane coordinates: (along the wall, height) / world xz on floors
-      float lum = dot(vColor.rgb, vec3(0.3333));                               // baked AO * part tint: low in creases
-      // crease edge-light: the normal jumps across a bevel / chamfer, so its screen derivative is a crisp 1-2 px line (soft snow geometry has none)
       float cr = smoothstep(0.16, 0.55, length(fwidth(vWN))) * (1.0 - smoothstep(55.0, 140.0, camD));
       // painted plates: wall-aligned cells with a soft per-plate tone and a slow top-light / foot-dark gradient inside each plate
       vec2 cell = pc / vec2(2.2, 2.9);
       vec2 ci = floor(cell), cf = fract(cell);
       float ph = h21(ci * 1.37 + 5.0);
-      float pl = (ph - 0.5) * 2.0 * uDetail.y * (1.0 - smoothstep(50.0, 130.0, camD));
-      float pg = (cf.y - 0.5) * uDetail.y * 0.9 * (1.0 - horiz) * (1.0 - smoothstep(50.0, 130.0, camD));
+      float pFade = 1.0 - smoothstep(50.0, 130.0, camD);
+      float pl = (ph - 0.5) * 2.0 * uDetail.y * pFade;
+      float pg = (cf.y - 0.5) * uDetail.y * 1.1 * (1.0 - horiz) * pFade;
       baseC *= 1.0 + pl + pg;
       baseC *= mix(vec3(1.0), ph > 0.5 ? vec3(1.012, 1.0, 0.982) : vec3(0.985, 0.995, 1.016), abs(ph - 0.5) * 1.2 * dN);
-      // dry-brush grain: long streaks along the wall, a second finer octave
-      float g1 = vn(vec2(pc.x * 1.4, pc.y * 0.24) + 3.0);
-      float g2 = vn(vec2(pc.x * 4.3, pc.y * 1.1) + 11.0);
-      baseC *= 1.0 + ((g1 - 0.5) * 0.6 + (g2 - 0.5) * 0.4) * 2.0 * uDetail.x * dN;
-      // stains: thin dark-blue runs down steep faces (melt water under ledges and plates)
-      float st = smoothstep(0.68, 0.88, vn(vec2(pc.x * 0.9, pc.y * 0.06 + 40.0)));
-      baseC *= mix(vec3(1.0), vec3(0.92, 0.945, 1.0), st * vertK * uDetail.x * 3.0 * (1.0 - smoothstep(30.0, 90.0, camD)));
-      // chipped paint: ragged patches of undercoat, concentrated near creases / in occluded corners
-      if (uDetail.z > 0.0) {
-        vec2 cp = pc * vec2(2.6, 1.9) + 31.0;
-        float cn = vn(cp) * 0.55 + vn(cp * 2.9 + 7.0) * 0.30 + vn(cp * 8.3 + 2.0) * 0.15;
-        float eb = (1.0 - smoothstep(0.50, 0.95, lum)) * 0.17;
-        float thr = 0.80 - uDetail.z * 1.7;
-        float nearC = 1.0 - smoothstep(22.0, 75.0, camD);
-        float chip = smoothstep(thr, thr + 0.03, cn + eb) * nearC;
-        float lipC = smoothstep(thr - 0.035, thr, cn + eb) * (1.0 - chip) * nearC;
-        baseC *= 1.0 + lipC * 0.07;
-        baseC = mix(baseC, baseC * uUnder, chip);
+      // painted patches: wall-aligned cellular facets (taller than wide, wobbly edges), each a flat step of tone that leans warm or cool, like the
+      // blocked-in planes of a thick-paint study. The step between neighbours leaves a hair of impasto ridge, lit from the upper left.
+      vec2 qw = vec2(vn(pc * 1.3 + 2.0), vn(pc * 1.3 + 9.0)) - 0.5;
+      vec2 qq = pc / vec2(1.7, 2.5) + qw * 0.38;
+      vec2 qi = floor(qq), qf = fract(qq);
+      float F1 = 9.0, tone = 0.5;
+      for (int j = -1; j <= 1; j++) for (int i = -1; i <= 1; i++) {
+        vec2 g = vec2(float(i), float(j));
+        vec2 o = vec2(h21(qi + g + 1.7), h21(qi + g + 8.3));
+        vec2 d = g + o - qf;
+        float dd = dot(d, d);
+        if (dd < F1) { F1 = dd; tone = h21(qi + g + 4.1); }
       }
+      baseC *= 1.0 + (tone - 0.5) * 2.0 * uDetail.x * dN;
+      baseC *= mix(vec3(0.982, 0.994, 1.020), vec3(1.020, 1.004, 0.976), tone * dN + 0.5 * (1.0 - dN));
+      vec2 gh = vec2(dFdx(tone), dFdy(tone));
+      float ridge = clamp(dot(gh, vec2(-0.6, 0.8)) * 3.0, -1.0, 1.0);
+      baseC *= 1.0 + ridge * uDetail.x * 0.55 * dN;
       baseC = mix(baseC, baseC * vec3(1.18, 1.19, 1.24) + 0.012, cr * uDetail.w);
+      // structured hand-detail: crisp plate seams with an embossed light lip, and edge wear that nicks the paint only along creases
+      float near = 1.0 - smoothstep(22.0, 70.0, camD);
+      if (uSeams > 0.5) {
+        float fwx = fwidth(pc.x), fwy = fwidth(pc.y);
+        float ddx = min(cf.x, 1.0 - cf.x) * 2.2, ddy = min(cf.y, 1.0 - cf.y) * 2.9;
+        float seam = max(1.0 - smoothstep(0.0, 0.016 + fwx, ddx), 1.0 - smoothstep(0.0, 0.016 + fwy, ddy)) * vertK * near;
+        float lip = max(1.0 - smoothstep(0.0, 0.014 + fwx, abs(cf.x * 2.2 - 0.045)), 1.0 - smoothstep(0.0, 0.014 + fwy, abs((1.0 - cf.y) * 2.9 - 0.045))) * vertK * near;
+        baseC *= 1.0 - seam * 0.17;
+        baseC *= 1.0 + lip * 0.06;
+      }
+      float chipH = h21(floor(pc * vec2(5.5, 4.0)) + 11.0);
+      float chipM = step(0.78, chipH) * smoothstep(0.10, 0.32, cr) * near;
+      baseC = mix(baseC, baseC * uUnder, chipM * 0.85);
     }
     // panel joints: a few faint darker seams on near-vertical faces; derivative-aware so they never moire
-    if (uSeams > 0.5) {
+    if (uSeams > 0.5 && uDetail.x + uDetail.y + uDetail.w <= 0.0) {
       float syy = wp.y / 2.7, suu = (wp.x * 0.8 + wp.z * 0.6) / 3.3;
       float lh = abs(fract(syy) - 0.5), lv = abs(fract(suu) - 0.5);
       float fh = fwidth(syy), fv = fwidth(suu);
@@ -258,7 +271,7 @@ function patchPaint(mat, o) {
       .replace('#include <emissivemap_fragment>', BOUNCE_GLSL)
       .replace('#include <opaque_fragment>', RIM_GLSL + GRADE_GLSL + '\n#include <opaque_fragment>');
   };
-  mat.customProgramCacheKey = () => 'paintG2';
+  mat.customProgramCacheKey = () => 'paintG3';
 }
 
 // structure snow (snowPillow / drifts / run-drifts): same snow colour model, no painted base
@@ -298,7 +311,7 @@ function patchSnow(mat) {
 
 // per-family colour behaviour
 const SLATE = { driftA: [0.94, 0.985, 1.07], driftB: [1.06, 0.965, 1.03], shade: [0.140, 0.105, 0.070], shadeAbs: [0.020, 0.018, 0.022], shadeMul: [0.90, 0.94, 0.98], warm: [1.06, 1.0, 0.93], bounce: [0.060, 0.062, 0.075] };
-const CORAL = { driftA: [1.02, 1.14, 0.92], driftB: [0.96, 0.88, 1.06], shade: [0.150, 0.060, 0.095], shadeAbs: [0.050, 0.018, 0.032], shadeMul: [0.94, 1.0, 1.0], warm: [1.02, 1.0, 0.97] };
+const CORAL = { driftA: [1.02, 1.14, 0.92], driftB: [0.96, 0.88, 1.06], shade: [0.185, 0.080, 0.070], shadeAbs: [0.050, 0.020, 0.022], shadeMul: [0.97, 0.96, 0.96], warm: [1.02, 1.0, 0.97] };
 const ROCKRED = { driftA: [1.03, 1.10, 0.92], driftB: [0.96, 0.90, 1.05], shade: [0.125, 0.070, 0.105], shadeAbs: [0.030, 0.016, 0.040], shadeMul: [0.95, 1.02, 1.0], warm: [1.03, 1.0, 0.96] };
 const ROCKBLUE = { driftA: [0.97, 0.99, 1.04], driftB: [1.03, 1.0, 0.99], shade: [0.130, 0.100, 0.075], shadeAbs: [0.020, 0.018, 0.026], shadeMul: [0.92, 0.95, 1.0], warm: [1.03, 1.0, 0.96], bounce: [0.060, 0.062, 0.080] };
 
@@ -313,14 +326,14 @@ function toon(color, { snow = 0, cover = 1, emissive = 0x000000, emissiveIntensi
 
 // Material library used by the architecture batches
 export const MAT = {
-  wall: toon(PAL.wall, { snow: 1, seams: 1, snowTh: 0.56, detail: [0.085, 0.060, 0.030, 0.60], under: [0.64, 0.66, 0.74] }),
-  wallLight: toon(PAL.wallLight, { snow: 1, seams: 1, snowTh: 0.56, detail: [0.075, 0.055, 0.028, 0.60], under: [0.68, 0.70, 0.78] }),
-  wallDark: toon(PAL.wallDark, { snow: 0.0, seams: 1, detail: [0.070, 0.040, 0.025, 0.55], under: [1.22, 1.20, 1.16] }),
-  trim: toon(PAL.trim, { snow: 1, seams: 1, snowTh: 0.56, detail: [0.060, 0.040, 0.025, 0.60], under: [0.66, 0.68, 0.76] }),
-  metal: toon(PAL.metal, { snow: 0.9, snowTh: 0.6, detail: [0.060, 0.035, 0.020, 0.50], under: [1.18, 1.18, 1.18] }),
-  deck: toon(0x666c92, { seams: 1, snow: 1, snowTh: 0.7, cover: 0.42, detail: [0.090, 0.050, 0.030, 0.50], under: [0.66, 0.66, 0.74] }),
-  accent: toon(PAL.accent, { snow: 0.85, snowTh: 0.62, bounce: [0.15, 0.05, 0.035], fam: CORAL, detail: [0.075, 0.055, 0.050, 0.70], under: [0.56, 0.38, 0.44] }),
-  accentDark: toon(PAL.accentDark, { snow: 0.85, snowTh: 0.62, bounce: [0.15, 0.05, 0.05], fam: CORAL, detail: [0.075, 0.055, 0.050, 0.70], under: [0.56, 0.38, 0.44] }),
+  wall: toon(PAL.wall, { snow: 1, seams: 1, snowTh: 0.56, detail: [0.062, 0.050, 0.0, 0.60], under: [0.64, 0.66, 0.74] }),
+  wallLight: toon(PAL.wallLight, { snow: 1, seams: 1, snowTh: 0.56, detail: [0.058, 0.046, 0.0, 0.60], under: [0.68, 0.70, 0.78] }),
+  wallDark: toon(PAL.wallDark, { snow: 0.0, seams: 1, detail: [0.044, 0.036, 0.0, 0.55], under: [1.22, 1.20, 1.16] }),
+  trim: toon(PAL.trim, { snow: 1, seams: 1, snowTh: 0.56, detail: [0.040, 0.036, 0.0, 0.60], under: [0.66, 0.68, 0.76] }),
+  metal: toon(PAL.metal, { snow: 0.9, snowTh: 0.6, detail: [0.040, 0.030, 0.0, 0.50], under: [1.18, 1.18, 1.18] }),
+  deck: toon(0x666c92, { seams: 1, snow: 1, snowTh: 0.7, cover: 0.42, detail: [0.055, 0.045, 0.0, 0.50], under: [0.66, 0.66, 0.74] }),
+  accent: toon(PAL.accent, { snow: 0.85, snowTh: 0.62, bounce: [0.15, 0.05, 0.035], fam: CORAL, detail: [0.085, 0.050, 0.0, 0.70], under: [0.56, 0.38, 0.44] }),
+  accentDark: toon(PAL.accentDark, { snow: 0.85, snowTh: 0.62, bounce: [0.15, 0.05, 0.05], fam: CORAL, detail: [0.085, 0.050, 0.0, 0.70], under: [0.56, 0.38, 0.44] }),
   glass: toon(PAL.glass, { emissive: 0x26356f, emissiveIntensity: 0.30, paint: false }),
   glow: toon(0xf08a78, { emissive: 0xd85c56, emissiveIntensity: 0.9, paint: false }),
   rockBlue: toon(PAL.rockBlue, { snow: 1, strata: 1, snowTh: 0.83, ramp: RAMP_ROCK, fam: ROCKBLUE }),

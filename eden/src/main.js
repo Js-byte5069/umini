@@ -139,17 +139,23 @@ const finalPass = new ShaderPass({
     uPx: { value: new THREE.Vector2(1 / (innerWidth * renderer.getPixelRatio()), 1 / (innerHeight * renderer.getPixelRatio())) },
     uPaint: { value: NOPAINT ? 0 : pf('paint', 1.0) },
     uFlat: { value: NOPAINT ? 0 : pf('flat', 0.30) },
-    uContrast: { value: pf('contrast', 0.15) },
+    uContrast: { value: pf('contrast', 0.22) },
     uSat: { value: pf('sat', 1.07) },
     uBand: { value: NOPAINT ? 0 : pf('band', 0.16) },
+    uBrush: { value: NOPAINT || LOW ? 0 : pf('brush', 0.35) },       // ?q=low drops the three brush passes (about 40 extra taps per pixel)
+    uImp: { value: NOPAINT || LOW ? 0 : pf('imp', 1.0) },
+    uKuw: { value: NOPAINT || LOW ? 0 : pf('kuw', 0.30) },
     uVig: { value: pf('vig', 0.26) },
   },
   vertexShader: 'varying vec2 vUv; void main(){ vUv=uv; gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.0);}',
-  fragmentShader: `uniform sampler2D tDiffuse; uniform vec2 uPx; uniform float uPaint, uFlat, uContrast, uSat, uBand, uVig; varying vec2 vUv;
+  fragmentShader: `uniform sampler2D tDiffuse; uniform vec2 uPx; uniform float uPaint, uFlat, uContrast, uSat, uBand, uVig, uBrush, uKuw, uImp; varying vec2 vUv;
     const vec3 LUM = vec3(0.2126, 0.7152, 0.0722);
     vec3 srgb(vec3 c){ c = max(c, 0.0); return mix(c * 12.92, 1.055 * pow(c, vec3(1.0 / 2.4)) - 0.055, step(0.0031308, c)); }
     vec3 tap(vec2 o){ return texture2D(tDiffuse, vUv + o * uPx).rgb; }
     float lg(vec3 c){ return dot(sqrt(max(c, 0.0)), vec3(0.299, 0.587, 0.114)); }     // luma in ~gamma space (edge detection)
+    float hh(vec2 p){ return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
+    float vnz(vec2 p){ vec2 i = floor(p), f = fract(p); f = f * f * (3.0 - 2.0 * f);
+      return mix(mix(hh(i), hh(i + vec2(1.0, 0.0)), f.x), mix(hh(i + vec2(0.0, 1.0)), hh(i + vec2(1.0, 1.0)), f.x), f.y); }
     void main(){
       vec3 m = tap(vec2(0.0));
       vec3 c = m;
@@ -177,6 +183,79 @@ const finalPass = new ShaderPass({
           vec3 acc = c * 1.6 + nw * wNW + ne * wNE + sw * wSW + se * wSE;
           c = mix(c, acc / (1.6 + wNW + wNE + wSW + wSE), uFlat);
         }
+        // oil-paint planes (4-sector Kuwahara from bilinear 2x2 block taps): low-contrast variation inside a colour plane melts into one flat daub,
+        // a real edge keeps its crispness (the lowest-variance sector wins); thin high-contrast lines (rails, trusses) are protected by the detail mix
+        if (uKuw > 0.0) {
+          vec3 kc = vec3(0.0); float kw = 0.0;
+          for (int q = 0; q < 4; q++) {
+            vec2 sg = vec2(q == 0 || q == 2 ? -1.0 : 1.0, q < 2 ? -1.0 : 1.0);
+            vec3 t0 = tap(sg * vec2(0.5, 0.5)), t1 = tap(sg * vec2(2.5, 0.5)), t2 = tap(sg * vec2(0.5, 2.5)), t3 = tap(sg * vec2(2.5, 2.5));
+            float a0 = lg(t0), a1 = lg(t1), a2 = lg(t2), a3 = lg(t3);
+            float mu = (a0 + a1 + a2 + a3) * 0.25;
+            float vr = ((a0 - mu) * (a0 - mu) + (a1 - mu) * (a1 - mu) + (a2 - mu) * (a2 - mu) + (a3 - mu) * (a3 - mu)) * 0.25;
+            float wq = 1.0 / (1.0 + pow(vr * 900.0, 2.0));
+            kc += (t0 + t1 + t2 + t3) * 0.25 * wq; kw += wq;
+          }
+          kc /= max(kw, 1e-4);
+          float dL = abs(lg(c) - lg(kc));
+          float keep = smoothstep(0.04, 0.15, dL) * 0.85;
+          c = mix(c, mix(kc, c, keep), uKuw);
+        }
+        // brush strokes: smear along the local form (the tangent of the 2 px structure gradient), range-weighted so a stroke stops at a real edge;
+        // flat regions (sky, snow) follow a slow noise flow field. A faint bristle streak rides along each stroke; edges are re-crisped last.
+        if (uBrush > 0.0) {
+          float l0 = lg(c);
+          float lE = lg(tap(vec2(2.0, 0.0))), lW = lg(tap(vec2(-2.0, 0.0))), lN = lg(tap(vec2(0.0, -2.0))), lS = lg(tap(vec2(0.0, 2.0)));
+          float lNE2 = lg(tap(vec2(2.0, -2.0))), lNW2 = lg(tap(vec2(-2.0, -2.0))), lSE2 = lg(tap(vec2(2.0, 2.0))), lSW2 = lg(tap(vec2(-2.0, 2.0)));
+          float gx = (lNE2 + 2.0 * lE + lSE2) - (lNW2 + 2.0 * lW + lSW2);
+          float gy = (lSW2 + 2.0 * lS + lSE2) - (lNW2 + 2.0 * lN + lNE2);
+          vec2 tg = vec2(-gy, gx);
+          float tl = length(tg);
+          float coh = smoothstep(0.06, 0.26, tl);
+          float fa = (vnz(gl_FragCoord.xy / 420.0) - 0.5) * 0.9 + 0.5;
+          vec2 fb = vec2(cos(fa), sin(fa));
+          vec2 td = tl > 1e-4 ? tg / tl : fb;
+          if (dot(fb, td) < 0.0) fb = -fb;
+          td = normalize(mix(fb, td, coh));
+          vec3 acc = c; float wsum = 1.0;
+          for (int k = 1; k <= 3; k++) {
+            float fk = float(k) * 1.7, wk = exp(-float(k * k) / 6.0);
+            vec3 pA = tap(td * fk), pB = tap(-td * fk);
+            float wa = wk * exp(-pow((lg(pA) - l0) / 0.055, 2.0)), wb = wk * exp(-pow((lg(pB) - l0) / 0.055, 2.0));
+            acc += pA * wa + pB * wb; wsum += wa + wb;
+          }
+          vec3 sm = acc / wsum;
+          c = mix(c, sm, uBrush * (0.40 + 0.60 * coh));
+          vec2 nrm = vec2(-td.y, td.x);
+          float br = vnz(vec2(dot(gl_FragCoord.xy, nrm) * 0.55, dot(gl_FragCoord.xy, td) * 0.035));
+          c *= 1.0 + (br - 0.5) * 0.06 * uBrush * (1.0 - 0.5 * coh);
+          vec3 bl = (nw + ne + sw + se) * 0.25;
+          c += (c - bl) * 0.28 * uBrush * edge;
+        }
+        // impasto: a flow-aligned stroke height field (bristle width ~6 px, stroke length ~22 px) lit from the upper left. The relief is a thin ridge of
+        // light / shade on each stroke, strongest on big flat planes (sky, snow, walls), absent on real edges, so the picture reads as thick paint
+        if (uImp > 0.0) {
+          float l0i = lg(c);
+          float eE = lg(tap(vec2(2.0, 0.0))), eW = lg(tap(vec2(-2.0, 0.0))), eN = lg(tap(vec2(0.0, -2.0))), eS = lg(tap(vec2(0.0, 2.0)));
+          vec2 g2 = vec2(eE - eW, eS - eN);
+          float gl2 = length(g2);
+          vec2 tdi = gl2 > 1e-4 ? vec2(-g2.y, g2.x) / gl2 : vec2(0.8, 0.6);
+          float cohi = smoothstep(0.05, 0.16, gl2);
+          float fai = (vnz(gl_FragCoord.xy / 420.0 + 3.0) - 0.5) * 0.9 + 0.5;
+          vec2 fbi = vec2(cos(fai), sin(fai));
+          if (dot(fbi, tdi) < 0.0) fbi = -fbi;
+          tdi = normalize(mix(fbi, tdi, cohi));
+          vec2 ni = vec2(-tdi.y, tdi.x);
+          vec2 P = gl_FragCoord.xy;
+          float uu = dot(P, ni), vv = dot(P, tdi);
+          float h0 = vnz(vec2(uu * 0.17, vv * 0.045)) * 0.62 + vnz(vec2(uu * 0.43, vv * 0.10) + 5.0) * 0.38;
+          float hu = vnz(vec2((uu + 1.5) * 0.17, vv * 0.045)) * 0.62 + vnz(vec2((uu + 1.5) * 0.43, vv * 0.10) + 5.0) * 0.38;
+          float hv = vnz(vec2(uu * 0.17, (vv + 1.5) * 0.045)) * 0.62 + vnz(vec2(uu * 0.43, (vv + 1.5) * 0.10) + 5.0) * 0.38;
+          vec2 grad = (hu - h0) * ni + (hv - h0) * tdi;                   // gradient of the stroke height in screen space
+          float rel = clamp(dot(grad, normalize(vec2(-0.55, 0.83))) * 2.2, -1.0, 1.0);
+          float flatK = 1.0 - smoothstep(0.05, 0.22, edge + gl2 * 0.8);      // fade on real edges
+          c *= 1.0 + rel * 0.04 * uImp * (0.5 + 0.5 * flatK);
+        }
       }
       // soft shoulder keeps the snow from clipping; all values stay linear until the very end
       c = c / (1.0 + max(c - 0.92, 0.0) * 0.6);
@@ -187,7 +266,8 @@ const finalPass = new ShaderPass({
       g *= gl2 / max(gl, 1e-4);
       gl = dot(g, LUM);
       // cool lifted shadows, warm clean highlights
-      g = mix(g, g * vec3(0.945, 0.975, 1.065), 1.0 - smoothstep(0.06, 0.55, gl));
+      float warmK = clamp((g.r - g.b) * 2.6, 0.0, 1.0);                 // saturated warm colours (coral) keep their hue in shadow instead of going magenta
+      g = mix(g, g * vec3(0.945, 0.975, 1.065), (1.0 - smoothstep(0.06, 0.55, gl)) * (1.0 - 0.75 * warmK));
       g = mix(g, g * vec3(1.035, 1.004, 0.958), smoothstep(0.62, 0.98, gl));
       g += vec3(0.008, 0.012, 0.030) * (1.0 - smoothstep(0.0, 0.32, gl));      // blacks lift to navy, never black
       // controlled saturation: richer mid / dark colours, whites stay white
