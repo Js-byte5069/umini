@@ -6,11 +6,11 @@ import './atmosphere.js';
 export const PAL = {
   snow: 0xf8f7fb,
   snowShade: 0xaab6e8,
-  wall: 0x9ca3c4,          // main material: light cool grey (reference tower sheet), lit faces go almost white, shade lavender-blue
-  wallLight: 0xbbc1da,
-  wallDark: 0x464b6e,
+  wall: 0x767c9e,          // main material: light cool grey (reference tower sheet), lit faces go almost white, shade lavender-blue
+  wallLight: 0xaab0cc,
+  wallDark: 0x3d4263,
   trim: 0xbcc1d8,
-  metal: 0x444968,
+  metal: 0x3b4060,
   glass: 0x1c2347,
   accent: 0xf28378,          // coral red-orange (concept swatches #e1706d / #c85b5a), no hot orange
   accentDark: 0xd0626a,      // darker red for the shaded / secondary panels
@@ -35,7 +35,7 @@ function rampTex(fn) {
   return t;
 }
 // SHADOW (0) -> MIDTONE (0.74) -> LIGHT (1): two soft terminators
-export const RAMP = rampTex((d) => 0.74 * sm(-0.14, 0.10, d) + 0.26 * sm(0.20, 0.44, d));
+export const RAMP = rampTex((d) => 0.74 * sm(-0.08, 0.06, d) + 0.26 * sm(0.22, 0.36, d));      // terminators about half as wide as before: flat painted planes with a clear light / shade step
 // rocks: four soft steps so every curved lump still shows shade / core / half-light / light planes, without hard bands
 export const RAMP_ROCK = rampTex((d) => 0.20 * sm(-0.54, -0.40, d) + 0.30 * sm(-0.16, -0.02, d) + 0.28 * sm(0.16, 0.30, d) + 0.22 * sm(0.44, 0.58, d));
 // the terrain's snow ramp (also used by the debris snow caps): crisp 3 tones, only anti-aliased
@@ -331,7 +331,7 @@ export const MAT = {
   wallDark: toon(PAL.wallDark, { snow: 0.0, seams: 1, detail: [0.044, 0.036, 0.0, 0.55], under: [1.22, 1.20, 1.16] }),
   trim: toon(PAL.trim, { snow: 1, seams: 1, snowTh: 0.56, detail: [0.040, 0.036, 0.0, 0.60], under: [0.66, 0.68, 0.76] }),
   metal: toon(PAL.metal, { snow: 0.9, snowTh: 0.6, detail: [0.040, 0.030, 0.0, 0.50], under: [1.18, 1.18, 1.18] }),
-  deck: toon(0x666c92, { seams: 1, snow: 1, snowTh: 0.7, cover: 0.42, detail: [0.055, 0.045, 0.0, 0.50], under: [0.66, 0.66, 0.74] }),
+  deck: toon(0x585e84, { seams: 1, snow: 1, snowTh: 0.7, cover: 0.42, detail: [0.055, 0.045, 0.0, 0.50], under: [0.66, 0.66, 0.74] }),
   accent: toon(PAL.accent, { snow: 0.85, snowTh: 0.62, bounce: [0.15, 0.05, 0.035], fam: CORAL, detail: [0.085, 0.050, 0.0, 0.70], under: [0.56, 0.38, 0.44] }),
   accentDark: toon(PAL.accentDark, { snow: 0.85, snowTh: 0.62, bounce: [0.15, 0.05, 0.05], fam: CORAL, detail: [0.085, 0.050, 0.0, 0.70], under: [0.56, 0.38, 0.44] }),
   glass: toon(PAL.glass, { emissive: 0x26356f, emissiveIntensity: 0.30, paint: false }),

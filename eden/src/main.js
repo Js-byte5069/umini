@@ -39,7 +39,7 @@ const camera = new THREE.PerspectiveCamera(68, innerWidth / innerHeight, 0.1, 90
 // planes are saturated pale blue-violet (never grey or black), plus a shadowless cool bounce from the shadow side that gives forms
 // inside cast shadow a second, gentler value step. Three tonal regions (light / midtone / shadow) therefore read at every scale.
 const EXPO = pf('expo', 1.0);
-const sun = new THREE.DirectionalLight(0xfff4e6, pf('sun', 2.35) * EXPO);
+const sun = new THREE.DirectionalLight(0xfff4e6, pf('sun', 2.8) * EXPO);
 sun.castShadow = true;
 const SM = LOW ? 2048 : 4096;
 sun.shadow.mapSize.set(SM, SM);
@@ -48,8 +48,8 @@ Object.assign(sun.shadow.camera, { left: -SH, right: SH, top: SH, bottom: -SH, n
 sun.shadow.bias = pf('bias', -0.0004);
 sun.shadow.normalBias = pf('nb', 0.35);
 scene.add(sun, sun.target);
-scene.add(new THREE.HemisphereLight(0xa0bfff, 0x6f84de, pf('hemi', 1.65) * EXPO));      // clear saturated blue shade (no lavender grey)
-const fill = new THREE.DirectionalLight(0x9db6ff, pf('fill', 0.45) * EXPO);
+scene.add(new THREE.HemisphereLight(0xa0bfff, 0x6f84de, pf('hemi', 1.2) * EXPO));      // clear saturated blue shade (no lavender grey)
+const fill = new THREE.DirectionalLight(0x9db6ff, pf('fill', 0.4) * EXPO);
 fill.position.set(0.78, 0.38, -0.30);
 scene.add(fill);
 
@@ -100,7 +100,7 @@ if (!params.has('noao')) {
   gtao = new GTAOPass(scene, camera, innerWidth, innerHeight);
   gtao.updateGtaoMaterial({ radius: pf('aor', 3.2), distanceExponent: 1.4, thickness: 3, scale: pf('aos', 1.25), samples: LOW ? 8 : 16, distanceFallOff: 1.2, screenSpaceRadius: false });
   gtao.updatePdMaterial({ lumaPhi: 10, depthPhi: 2, normalPhi: 3, radius: 6, rings: 2, samples: 12 });
-  gtao.blendIntensity = pf('aoi', 0.85);
+  gtao.blendIntensity = pf('aoi', 0.65);
   // AO is a near-field depth cue: it fades out with distance (aerial perspective owns the far field, so far spires and rims are never
   // darkened by contact shadows that the haze would have washed out) and never touches the sky (depth 1)
   Object.assign(gtao.blendMaterial.uniforms, { tDepth: { value: gtao.depthTexture }, uNear: { value: camera.near }, uFar: { value: camera.far }, uFade: { value: new THREE.Vector2(70, 340) } });
@@ -140,7 +140,7 @@ const finalPass = new ShaderPass({
     uPaint: { value: NOPAINT ? 0 : pf('paint', 1.0) },
     uFlat: { value: NOPAINT ? 0 : pf('flat', 0.30) },
     uContrast: { value: pf('contrast', 0.22) },
-    uSat: { value: pf('sat', 1.07) },
+    uSat: { value: pf('sat', 1.14) },
     uBand: { value: NOPAINT ? 0 : pf('band', 0.16) },
     uBrush: { value: NOPAINT || LOW ? 0 : pf('brush', 0.35) },       // ?q=low drops the three brush passes (about 40 extra taps per pixel)
     uImp: { value: NOPAINT || LOW ? 0 : pf('imp', 1.0) },
@@ -258,7 +258,7 @@ const finalPass = new ShaderPass({
         }
       }
       // soft shoulder keeps the snow from clipping; all values stay linear until the very end
-      c = c / (1.0 + max(c - 0.92, 0.0) * 0.6);
+      c = c / (1.0 + max(c - 0.98, 0.0) * 0.5);
       vec3 g = srgb(c);                                      // display-referred from here on
       float gl = dot(g, LUM);
       // stylised value curve: gentle S (deeper darks, cleaner lights), hue preserved
@@ -270,6 +270,7 @@ const finalPass = new ShaderPass({
       g = mix(g, g * vec3(0.945, 0.975, 1.065), (1.0 - smoothstep(0.06, 0.55, gl)) * (1.0 - 0.75 * warmK));
       g = mix(g, g * vec3(1.035, 1.004, 0.958), smoothstep(0.62, 0.98, gl));
       g += vec3(0.008, 0.012, 0.030) * (1.0 - smoothstep(0.0, 0.32, gl));      // blacks lift to navy, never black
+      g = mix(g, vec3(1.0), smoothstep(0.86, 0.985, dot(g, LUM)) * 0.5);          // sunlit snow and clouds reach clean white (the concept's lights are paper white)
       // controlled saturation: richer mid / dark colours, whites stay white
       gl = dot(g, LUM);
       g = mix(vec3(gl), g, mix(uSat, 1.0, smoothstep(0.58, 0.96, gl)));
