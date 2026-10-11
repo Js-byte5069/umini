@@ -30,7 +30,7 @@ renderer.shadowMap.type = params.has('pcf') ? THREE.PCFShadowMap : THREE.PCFSoft
 const scene = new THREE.Scene();
 scene.background = FOG_COLOR;
 // atmospheric perspective (see atmosphere.js): near = clear distance, far = haze length scale
-scene.fog = new THREE.Fog(FOG_COLOR, pf('fn', 24), pf('ff', 420));
+scene.fog = new THREE.Fog(FOG_COLOR, pf('fn', 50), pf('ff', 700));
 
 const camera = new THREE.PerspectiveCamera(68, innerWidth / innerHeight, 0.1, 9000);
 
