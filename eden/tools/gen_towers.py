@@ -860,7 +860,7 @@ def main():
         if only is not None and T['id'] != only: continue
         for lod in (0, 1, 2):
             B, F, S, G, cols = build_tower(T, lod)
-            if lod == 0: bevel_all(B, 0.1, 1)
+            if lod == 0: bevel_all(B, 0.2, 2)
             subdiv(B, {0: 8.0, 1: 6.0}.get(lod, 9999), {0: 3, 1: 3}.get(lod, 0))
             B.append(G); B.append(F)
             AO = {0: dict(rays=12, maxd=5.0, thr=0.16, minlen=2.8, passes=2), 1: dict(rays=6, maxd=5.0, thr=0.2, minlen=4.0, passes=0), 2: None}[lod]

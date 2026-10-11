@@ -34,6 +34,7 @@ import numpy as np
 from mathutils import Vector, Matrix, bvhtree
 
 HERE = os.path.dirname(os.path.abspath(__file__))
+BEV_K, BEV_ADD = 1.8, 0.04          # global bevel growth (per-box `bev` values are the design widths)
 OUT = os.environ.get('BLD_OUT') or os.path.join(HERE, '..', 'assets', 'buildings.glb')
 SPEC_PATH = os.path.join(HERE, 'buildings.json')
 CACHE = os.path.join(tempfile.gettempdir(), 'eden_bcache')      # dev cache (outside the repo); safe to delete
@@ -180,7 +181,7 @@ class Mod:
         if rot:
             bmesh.ops.rotate(bm, cent=(0, 0, 0), matrix=Matrix.Rotation(rot[2], 3, 'Z') @ Matrix.Rotation(rot[1], 3, 'Y') @ Matrix.Rotation(rot[0], 3, 'X'), verts=verts)
         bmesh.ops.translate(bm, vec=c, verts=verts)
-        if bev > 0: self._bevel(faces, min(bev, 0.42 * min(s)), seg, bev_edges)
+        if bev > 0: self._bevel(faces, min(bev * BEV_K + BEV_ADD, 0.42 * min(s)), seg, bev_edges)       # softer, wider chamfers: forms read as sculpted, not as sharp CG boxes
         return faces
 
     def beam(self, a, b, w, h, mat, up=None, bev=0.0, seg=1, skip=()):

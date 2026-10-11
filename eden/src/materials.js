@@ -89,6 +89,8 @@ uniform vec3 uShade;
 uniform vec3 uShadeAbs;
 uniform vec3 uShadeMul;
 uniform vec3 uWarm;
+uniform vec4 uDetail;     // hand-painted surface richness: x brush grain / stains, y plate tone, z paint chipping, w crease edge-light
+uniform vec3 uUnder;      // what chipped paint reveals (multiplier of the base colour)
 float gSnowA = 0.0;
 float gGradeK = 1.0;
 float gLip = 1.0;
@@ -126,6 +128,44 @@ const PAINT_GLSL = /* glsl */ `
     float hg = smoothstep(-2.0, 46.0, wp.y);
     baseC *= mix(0.88, 1.08, hg);
     baseC = mix(baseC, baseC * vec3(1.03, 1.0, 0.96), hg * 0.5);
+    // ── hand-painted surface richness (architecture only): brush grain, painted plates, chipped paint, edge light, stains ──
+    if (uDetail.x + uDetail.y + uDetail.z + uDetail.w > 0.0) {
+      float dN = 1.0 - smoothstep(30.0, 110.0, camD);
+      float horiz = smoothstep(0.55, 0.85, abs(vWN.y));
+      vec2 tg = normalize(vec2(-vWN.z, vWN.x) + vec2(1e-4, 0.0));
+      vec2 pc = mix(vec2(dot(wp.xz, tg), wp.y), wp.xz, horiz);                 // plane coordinates: (along the wall, height) / world xz on floors
+      float lum = dot(vColor.rgb, vec3(0.3333));                               // baked AO * part tint: low in creases
+      // crease edge-light: the normal jumps across a bevel / chamfer, so its screen derivative is a crisp 1-2 px line (soft snow geometry has none)
+      float cr = smoothstep(0.16, 0.55, length(fwidth(vWN))) * (1.0 - smoothstep(55.0, 140.0, camD));
+      // painted plates: wall-aligned cells with a soft per-plate tone and a slow top-light / foot-dark gradient inside each plate
+      vec2 cell = pc / vec2(2.2, 2.9);
+      vec2 ci = floor(cell), cf = fract(cell);
+      float ph = h21(ci * 1.37 + 5.0);
+      float pl = (ph - 0.5) * 2.0 * uDetail.y * (1.0 - smoothstep(50.0, 130.0, camD));
+      float pg = (cf.y - 0.5) * uDetail.y * 0.9 * (1.0 - horiz) * (1.0 - smoothstep(50.0, 130.0, camD));
+      baseC *= 1.0 + pl + pg;
+      baseC *= mix(vec3(1.0), ph > 0.5 ? vec3(1.012, 1.0, 0.982) : vec3(0.985, 0.995, 1.016), abs(ph - 0.5) * 1.2 * dN);
+      // dry-brush grain: long streaks along the wall, a second finer octave
+      float g1 = vn(vec2(pc.x * 1.4, pc.y * 0.24) + 3.0);
+      float g2 = vn(vec2(pc.x * 4.3, pc.y * 1.1) + 11.0);
+      baseC *= 1.0 + ((g1 - 0.5) * 0.6 + (g2 - 0.5) * 0.4) * 2.0 * uDetail.x * dN;
+      // stains: thin dark-blue runs down steep faces (melt water under ledges and plates)
+      float st = smoothstep(0.68, 0.88, vn(vec2(pc.x * 0.9, pc.y * 0.06 + 40.0)));
+      baseC *= mix(vec3(1.0), vec3(0.92, 0.945, 1.0), st * vertK * uDetail.x * 3.0 * (1.0 - smoothstep(30.0, 90.0, camD)));
+      // chipped paint: ragged patches of undercoat, concentrated near creases / in occluded corners
+      if (uDetail.z > 0.0) {
+        vec2 cp = pc * vec2(2.6, 1.9) + 31.0;
+        float cn = vn(cp) * 0.55 + vn(cp * 2.9 + 7.0) * 0.30 + vn(cp * 8.3 + 2.0) * 0.15;
+        float eb = (1.0 - smoothstep(0.50, 0.95, lum)) * 0.17;
+        float thr = 0.80 - uDetail.z * 1.7;
+        float nearC = 1.0 - smoothstep(22.0, 75.0, camD);
+        float chip = smoothstep(thr, thr + 0.03, cn + eb) * nearC;
+        float lipC = smoothstep(thr - 0.035, thr, cn + eb) * (1.0 - chip) * nearC;
+        baseC *= 1.0 + lipC * 0.07;
+        baseC = mix(baseC, baseC * uUnder, chip);
+      }
+      baseC = mix(baseC, baseC * vec3(1.18, 1.19, 1.24) + 0.012, cr * uDetail.w);
+    }
     // panel joints: a few faint darker seams on near-vertical faces; derivative-aware so they never moire
     if (uSeams > 0.5) {
       float syy = wp.y / 2.7, suu = (wp.x * 0.8 + wp.z * 0.6) / 3.3;
@@ -207,6 +247,8 @@ function patchPaint(mat, o) {
     sh.uniforms.uShadeAbs = { value: new THREE.Vector3(...o.shadeAbs) };
     sh.uniforms.uShadeMul = { value: new THREE.Vector3(...o.shadeMul) };
     sh.uniforms.uWarm = { value: new THREE.Vector3(...o.warm) };
+    sh.uniforms.uDetail = { value: new THREE.Vector4(...o.detail) };
+    sh.uniforms.uUnder = { value: new THREE.Vector3(...o.under) };
     sh.vertexShader = sh.vertexShader
       .replace('#include <common>', '#include <common>\n' + VERT_PARS)
       .replace('#include <begin_vertex>', VERT_BODY);
@@ -216,7 +258,7 @@ function patchPaint(mat, o) {
       .replace('#include <emissivemap_fragment>', BOUNCE_GLSL)
       .replace('#include <opaque_fragment>', RIM_GLSL + GRADE_GLSL + '\n#include <opaque_fragment>');
   };
-  mat.customProgramCacheKey = () => 'paintG1';
+  mat.customProgramCacheKey = () => 'paintG2';
 }
 
 // structure snow (snowPillow / drifts / run-drifts): same snow colour model, no painted base
@@ -260,25 +302,25 @@ const CORAL = { driftA: [1.02, 1.14, 0.92], driftB: [0.96, 0.88, 1.06], shade: [
 const ROCKRED = { driftA: [1.03, 1.10, 0.92], driftB: [0.96, 0.90, 1.05], shade: [0.125, 0.070, 0.105], shadeAbs: [0.030, 0.016, 0.040], shadeMul: [0.95, 1.02, 1.0], warm: [1.03, 1.0, 0.96] };
 const ROCKBLUE = { driftA: [0.97, 0.99, 1.04], driftB: [1.03, 1.0, 0.99], shade: [0.130, 0.100, 0.075], shadeAbs: [0.020, 0.018, 0.026], shadeMul: [0.92, 0.95, 1.0], warm: [1.03, 1.0, 0.96], bounce: [0.060, 0.062, 0.080] };
 
-function toon(color, { snow = 0, cover = 1, emissive = 0x000000, emissiveIntensity = 0, side, seams = 0, paint = true, strata = 0, snowTh = 0.69, ramp = RAMP, bounce, fam = SLATE } = {}) {
+function toon(color, { snow = 0, cover = 1, emissive = 0x000000, emissiveIntensity = 0, side, seams = 0, paint = true, strata = 0, snowTh = 0.69, ramp = RAMP, bounce, fam = SLATE, detail = [0, 0, 0, 0], under = [0.5, 0.5, 0.6] } = {}) {
   const m = new THREE.MeshToonMaterial({
     color, gradientMap: ramp, vertexColors: true, emissive, emissiveIntensity,
   });
   if (side !== undefined) m.side = side;
-  if (paint) patchPaint(m, { snow, cover, seams, strata, snowTh, ...fam, ...(bounce ? { bounce } : {}) });
+  if (paint) patchPaint(m, { snow, cover, seams, strata, snowTh, detail, under, ...fam, ...(bounce ? { bounce } : {}) });
   return m;
 }
 
 // Material library used by the architecture batches
 export const MAT = {
-  wall: toon(PAL.wall, { snow: 1, seams: 1, snowTh: 0.56 }),
-  wallLight: toon(PAL.wallLight, { snow: 1, seams: 1, snowTh: 0.56 }),
-  wallDark: toon(PAL.wallDark, { snow: 0.0, seams: 1 }),
-  trim: toon(PAL.trim, { snow: 1, seams: 1, snowTh: 0.56 }),
-  metal: toon(PAL.metal, { snow: 0.9, snowTh: 0.6 }),
-  deck: toon(0x666c92, { seams: 1, snow: 1, snowTh: 0.7, cover: 0.42 }),
-  accent: toon(PAL.accent, { snow: 0.85, snowTh: 0.62, bounce: [0.15, 0.05, 0.035], fam: CORAL }),
-  accentDark: toon(PAL.accentDark, { snow: 0.85, snowTh: 0.62, bounce: [0.15, 0.05, 0.05], fam: CORAL }),
+  wall: toon(PAL.wall, { snow: 1, seams: 1, snowTh: 0.56, detail: [0.085, 0.060, 0.030, 0.60], under: [0.64, 0.66, 0.74] }),
+  wallLight: toon(PAL.wallLight, { snow: 1, seams: 1, snowTh: 0.56, detail: [0.075, 0.055, 0.028, 0.60], under: [0.68, 0.70, 0.78] }),
+  wallDark: toon(PAL.wallDark, { snow: 0.0, seams: 1, detail: [0.070, 0.040, 0.025, 0.55], under: [1.22, 1.20, 1.16] }),
+  trim: toon(PAL.trim, { snow: 1, seams: 1, snowTh: 0.56, detail: [0.060, 0.040, 0.025, 0.60], under: [0.66, 0.68, 0.76] }),
+  metal: toon(PAL.metal, { snow: 0.9, snowTh: 0.6, detail: [0.060, 0.035, 0.020, 0.50], under: [1.18, 1.18, 1.18] }),
+  deck: toon(0x666c92, { seams: 1, snow: 1, snowTh: 0.7, cover: 0.42, detail: [0.090, 0.050, 0.030, 0.50], under: [0.66, 0.66, 0.74] }),
+  accent: toon(PAL.accent, { snow: 0.85, snowTh: 0.62, bounce: [0.15, 0.05, 0.035], fam: CORAL, detail: [0.075, 0.055, 0.050, 0.70], under: [0.56, 0.38, 0.44] }),
+  accentDark: toon(PAL.accentDark, { snow: 0.85, snowTh: 0.62, bounce: [0.15, 0.05, 0.05], fam: CORAL, detail: [0.075, 0.055, 0.050, 0.70], under: [0.56, 0.38, 0.44] }),
   glass: toon(PAL.glass, { emissive: 0x26356f, emissiveIntensity: 0.30, paint: false }),
   glow: toon(0xf08a78, { emissive: 0xd85c56, emissiveIntensity: 0.9, paint: false }),
   rockBlue: toon(PAL.rockBlue, { snow: 1, strata: 1, snowTh: 0.83, ramp: RAMP_ROCK, fam: ROCKBLUE }),
