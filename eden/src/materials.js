@@ -128,9 +128,9 @@ const PAINT_GLSL = /* glsl */ `
     float hg = smoothstep(-2.0, 46.0, wp.y);
     baseC *= mix(0.88, 1.08, hg);
     baseC = mix(baseC, baseC * vec3(1.03, 1.0, 0.96), hg * 0.5);
-    // ── thick-paint look (architecture only): broad, form-following daubs of paint a step lighter / deeper / warmer / cooler, each with a thin
-    //    ridge of impasto light on its edge, per-plate tonal steps with a soft top-light gradient, and a crisp edge-light on creases.
-    //    No grain, no chips, no stains: the planes stay clean, the *paint* shows. ──
+    // ── thick-paint look (architecture only): broad flat patches of paint a step lighter / deeper / warmer / cooler with a hair of impasto ridge on
+    //    their edges, per-plate tonal steps with a soft top-light gradient, and a light edge on creases. Nothing else: no grain, chips, stains, seams or
+    //    rivets: the concept art's planes are clean. ──
     if (uDetail.x + uDetail.y + uDetail.w > 0.0) {
       float dN = 1.0 - smoothstep(35.0, 120.0, camD);
       float horiz = smoothstep(0.55, 0.85, abs(vWN.y));
@@ -165,19 +165,6 @@ const PAINT_GLSL = /* glsl */ `
       float ridge = clamp(dot(gh, vec2(-0.6, 0.8)) * 3.0, -1.0, 1.0);
       baseC *= 1.0 + ridge * uDetail.x * 0.55 * dN;
       baseC = mix(baseC, baseC * vec3(1.18, 1.19, 1.24) + 0.012, cr * uDetail.w);
-      // structured hand-detail: crisp plate seams with an embossed light lip, and edge wear that nicks the paint only along creases
-      float near = 1.0 - smoothstep(22.0, 70.0, camD);
-      if (uSeams > 0.5) {
-        float fwx = fwidth(pc.x), fwy = fwidth(pc.y);
-        float ddx = min(cf.x, 1.0 - cf.x) * 2.2, ddy = min(cf.y, 1.0 - cf.y) * 2.9;
-        float seam = max(1.0 - smoothstep(0.0, 0.016 + fwx, ddx), 1.0 - smoothstep(0.0, 0.016 + fwy, ddy)) * vertK * near;
-        float lip = max(1.0 - smoothstep(0.0, 0.014 + fwx, abs(cf.x * 2.2 - 0.045)), 1.0 - smoothstep(0.0, 0.014 + fwy, abs((1.0 - cf.y) * 2.9 - 0.045))) * vertK * near;
-        baseC *= 1.0 - seam * 0.17;
-        baseC *= 1.0 + lip * 0.06;
-      }
-      float chipH = h21(floor(pc * vec2(5.5, 4.0)) + 11.0);
-      float chipM = step(0.78, chipH) * smoothstep(0.10, 0.32, cr) * near;
-      baseC = mix(baseC, baseC * uUnder, chipM * 0.85);
     }
     // panel joints: a few faint darker seams on near-vertical faces; derivative-aware so they never moire
     if (uSeams > 0.5 && uDetail.x + uDetail.y + uDetail.w <= 0.0) {
@@ -271,7 +258,7 @@ function patchPaint(mat, o) {
       .replace('#include <emissivemap_fragment>', BOUNCE_GLSL)
       .replace('#include <opaque_fragment>', RIM_GLSL + GRADE_GLSL + '\n#include <opaque_fragment>');
   };
-  mat.customProgramCacheKey = () => 'paintG3';
+  mat.customProgramCacheKey = () => 'paintG5';
 }
 
 // structure snow (snowPillow / drifts / run-drifts): same snow colour model, no painted base
